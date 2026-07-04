@@ -26,3 +26,6 @@ go.work.sum
 *.sw?
 .DS_Store
 Thumbs.db
+
+# Private engineering workspace
+.dev/
