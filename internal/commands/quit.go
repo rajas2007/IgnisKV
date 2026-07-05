@@ -15,9 +15,11 @@ func NewQuitHandler() *QuitHandler {
 // Execute handles the QUIT command.
 //
 // It accepts no arguments. If any arguments are supplied it returns a StatusError
-// response. When called with no arguments it returns a StatusOK response with the
-// message "BYE", signalling the client's intention to quit. It does not close
-// sockets, exit the process, or access the storage engine.
+// response. When called with no arguments it returns a StatusExit response with
+// the message "BYE", signalling that the current session should terminate.
+// The handler does not close sockets or exit the process; it communicates that
+// intent through Response.Status so that higher layers can act on it without
+// inspecting command names.
 func (h *QuitHandler) Execute(cmd types.Command) types.Response {
 	if len(cmd.Args) != 0 {
 		return types.Response{
@@ -27,7 +29,7 @@ func (h *QuitHandler) Execute(cmd types.Command) types.Response {
 	}
 
 	return types.Response{
-		Status:  types.StatusOK,
+		Status:  types.StatusExit,
 		Message: "BYE",
 	}
 }

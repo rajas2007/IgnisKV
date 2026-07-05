@@ -18,6 +18,12 @@ const (
 	// This is the expected outcome for commands like GET on a key that does not exist,
 	// distinct from an error condition.
 	StatusNil
+
+	// StatusExit indicates that command execution completed successfully and the caller
+	// should terminate the current session. The command layer communicates the intent
+	// to exit through this status value rather than requiring higher layers to inspect
+	// command names, keeping command semantics inside the command package.
+	StatusExit
 )
 
 // Response represents the result of a command handler's execution.

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/rajas2007/IgnisKV/internal/store"
@@ -293,8 +294,8 @@ func TestQuitValid(t *testing.T) {
 	resp := d.Dispatch(types.Command{Name: "QUIT"})
 
 	// Assert
-	if resp.Status != types.StatusOK {
-		t.Fatalf("QUIT returned Status %v; want StatusOK", resp.Status)
+	if resp.Status != types.StatusExit {
+		t.Fatalf("QUIT returned Status %v; want StatusExit", resp.Status)
 	}
 	if resp.Message != "BYE" {
 		t.Fatalf("QUIT returned Message %q; want %q", resp.Message, "BYE")
@@ -372,7 +373,46 @@ func TestDispatcherRoutesCommands(t *testing.T) {
 
 	// QUIT
 	resp = d.Dispatch(types.Command{Name: "QUIT"})
-	if resp.Status != types.StatusOK || resp.Message != "BYE" {
-		t.Fatalf("QUIT returned Status %v, Message %q; want StatusOK, \"BYE\"", resp.Status, resp.Message)
+	if resp.Status != types.StatusExit || resp.Message != "BYE" {
+		t.Fatalf("QUIT returned Status %v, Message %q; want StatusExit, \"BYE\"", resp.Status, resp.Message)
+	}
+}
+
+// ----- HELP tests -----
+
+func TestHelpValid(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	d := NewDispatcher(s)
+
+	// Act
+	resp := d.Dispatch(types.Command{Name: "HELP"})
+
+	// Assert
+	if resp.Status != types.StatusOK {
+		t.Fatalf("HELP returned Status %v; want StatusOK", resp.Status)
+	}
+
+	for _, cmd := range []string{"PING", "SET", "GET", "DEL", "HELP", "QUIT"} {
+		if !strings.Contains(resp.Message, cmd) {
+			t.Fatalf("HELP message does not contain %q", cmd)
+		}
+	}
+}
+
+func TestHelpWrongArgumentCount(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	d := NewDispatcher(s)
+
+	// Act
+	resp := d.Dispatch(types.Command{Name: "HELP", Args: []string{"extra"}})
+
+	// Assert
+	if resp.Status != types.StatusError {
+		t.Fatalf("HELP extra returned Status %v; want StatusError", resp.Status)
+	}
+	if resp.Message != "wrong number of arguments" {
+		t.Fatalf("HELP extra returned Message %q; want %q", resp.Message, "wrong number of arguments")
 	}
 }
