@@ -34,7 +34,8 @@ func (s *Server) Start(address string) error {
 			return fmt.Errorf("failed to accept connection: %w", err)
 		}
 
-		// Sprint 6 constraint: Single client support, sequential processing.
-		s.handleConnection(conn)
+		// Sprint 7: Concurrent client support.
+		// Each client is handled in its own dedicated goroutine.
+		go s.handleConnection(conn)
 	}
 }
