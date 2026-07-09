@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/rajas2007/IgnisKV/internal/types"
 )
@@ -43,20 +45,47 @@ func NewMemoryStore() *MemoryStore {
 // while allowing concurrent readers to continue.
 func (s *MemoryStore) Save(filename string) error {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	data, err := json.Marshal(s.data)
+	s.mu.RUnlock()
+
 	if err != nil {
 		return fmt.Errorf("failed to serialize database state: %w", err)
 	}
 
-	tempFilename := filename + ".tmp"
-	if err := os.WriteFile(tempFilename, data, snapshotFilePermission); err != nil {
+	dir := filepath.Dir(filename)
+	base := filepath.Base(filename)
+	tmpFile, err := os.CreateTemp(dir, base+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tempFilename := tmpFile.Name()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tempFilename)
 		return fmt.Errorf("failed to write snapshot file: %w", err)
 	}
+	tmpFile.Close()
 
-	if err := os.Rename(tempFilename, filename); err != nil {
-		return fmt.Errorf("failed to commit snapshot file: %w", err)
+	if err := os.Chmod(tempFilename, snapshotFilePermission); err != nil {
+		os.Remove(tempFilename)
+		return fmt.Errorf("failed to set snapshot permissions: %w", err)
+	}
+
+	// Retry rename to handle Windows concurrent "Access is denied" errors
+	// caused by multiple threads replacing the file simultaneously.
+	var renameErr error
+	for i := 0; i < 50; i++ {
+		renameErr = os.Rename(tempFilename, filename)
+		if renameErr == nil {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
+
+	if renameErr != nil {
+		os.Remove(tempFilename)
+		return fmt.Errorf("failed to commit snapshot file: %w", renameErr)
 	}
 
 	return nil

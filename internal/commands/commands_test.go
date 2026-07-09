@@ -2,12 +2,28 @@ package commands
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/rajas2007/IgnisKV/internal/store"
 	"github.com/rajas2007/IgnisKV/internal/types"
 )
+
+func TestMain(m *testing.M) {
+	tempDir, err := os.MkdirTemp("", "igniskv-test-*")
+	if err != nil {
+		os.Exit(1)
+	}
+	originalDir, _ := os.Getwd()
+	os.Chdir(tempDir)
+
+	code := m.Run()
+
+	os.Chdir(originalDir)
+	os.RemoveAll(tempDir)
+	os.Exit(code)
+}
 
 func TestNewDispatcher(t *testing.T) {
 	// Arrange
@@ -414,5 +430,48 @@ func TestHelpWrongArgumentCount(t *testing.T) {
 	}
 	if resp.Message != "wrong number of arguments" {
 		t.Fatalf("HELP extra returned Message %q; want %q", resp.Message, "wrong number of arguments")
+	}
+}
+
+// ----- Persistence tests -----
+
+func TestAutomaticPersistence(t *testing.T) {
+	// Arrange
+	// Ensure a clean state for this specific test inside the shared TestMain tempdir
+	os.Remove(store.DefaultSnapshotFile)
+
+	s1 := store.NewMemoryStore()
+	d1 := NewDispatcher(s1)
+
+	// Act & Assert — GET does not create a snapshot
+	d1.Dispatch(types.Command{Name: "GET", Args: []string{"missing"}})
+	if _, err := os.Stat(store.DefaultSnapshotFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("GET created a snapshot file")
+	}
+
+	// Act & Assert — SET creates a snapshot
+	d1.Dispatch(types.Command{Name: "SET", Args: []string{"persistent", "value"}})
+	if _, err := os.Stat(store.DefaultSnapshotFile); err != nil {
+		t.Fatalf("SET failed to create a snapshot file: %v", err)
+	}
+
+	// Verify the snapshot can be loaded properly
+	s2 := store.NewMemoryStore()
+	if err := s2.Load(store.DefaultSnapshotFile); err != nil {
+		t.Fatalf("Failed to load snapshot: %v", err)
+	}
+	if val, _ := s2.Get("persistent"); val.Data != "value" {
+		t.Fatalf("Loaded snapshot missing SET value")
+	}
+
+	// Act & Assert — DEL updates the snapshot
+	d1.Dispatch(types.Command{Name: "DEL", Args: []string{"persistent"}})
+
+	s3 := store.NewMemoryStore()
+	if err := s3.Load(store.DefaultSnapshotFile); err != nil {
+		t.Fatalf("Failed to load snapshot: %v", err)
+	}
+	if s3.Exists("persistent") {
+		t.Fatalf("Loaded snapshot contained deleted value")
 	}
 }

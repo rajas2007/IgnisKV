@@ -3,6 +3,7 @@ package server_test
 import (
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +13,21 @@ import (
 	"github.com/rajas2007/IgnisKV/internal/server"
 	"github.com/rajas2007/IgnisKV/internal/store"
 )
+
+func TestMain(m *testing.M) {
+	tempDir, err := os.MkdirTemp("", "igniskv-server-test-*")
+	if err != nil {
+		os.Exit(1)
+	}
+	originalDir, _ := os.Getwd()
+	os.Chdir(tempDir)
+
+	code := m.Run()
+
+	os.Chdir(originalDir)
+	os.RemoveAll(tempDir)
+	os.Exit(code)
+}
 
 func TestServerEndToEnd(t *testing.T) {
 	// Arrange

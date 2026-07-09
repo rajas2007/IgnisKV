@@ -40,6 +40,13 @@ func (h *SetHandler) Execute(cmd types.Command) types.Response {
 
 	h.store.Set(cmd.Args[0], value)
 
+	if err := h.store.Save(store.DefaultSnapshotFile); err != nil {
+		return types.Response{
+			Status:  types.StatusError,
+			Message: err.Error(),
+		}
+	}
+
 	return types.Response{
 		Status:  types.StatusOK,
 		Message: "OK",
