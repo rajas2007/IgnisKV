@@ -2,6 +2,8 @@ package store
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -142,5 +144,92 @@ func TestExists(t *testing.T) {
 	// Assert — deleted key
 	if s.Exists("key") {
 		t.Fatalf("Exists() returned true for a key that was deleted")
+	}
+}
+
+func TestSaveAndLoadRoundtrip(t *testing.T) {
+	// Arrange
+	tempDir := t.TempDir()
+	snapshotFile := filepath.Join(tempDir, "igniskv.json")
+
+	s1 := NewMemoryStore()
+	s1.Set("city", types.Value{Type: types.StringType, Data: "Pune"})
+	s1.Set("age", types.Value{Type: types.StringType, Data: "25"})
+
+	// Act - Save
+	if err := s1.Save(snapshotFile); err != nil {
+		t.Fatalf("Save() returned unexpected error: %v", err)
+	}
+
+	// Act - Load into new store
+	s2 := NewMemoryStore()
+	if err := s2.Load(snapshotFile); err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+
+	// Assert
+	if val, _ := s2.Get("city"); val.Data != "Pune" {
+		t.Errorf("Load() city = %v; want Pune", val.Data)
+	}
+	if val, _ := s2.Get("age"); val.Data != "25" {
+		t.Errorf("Load() age = %v; want 25", val.Data)
+	}
+}
+
+func TestSaveAndLoadEmpty(t *testing.T) {
+	// Arrange
+	tempDir := t.TempDir()
+	snapshotFile := filepath.Join(tempDir, "empty.json")
+
+	s1 := NewMemoryStore()
+
+	// Act - Save empty store
+	if err := s1.Save(snapshotFile); err != nil {
+		t.Fatalf("Save() on empty store returned unexpected error: %v", err)
+	}
+
+	// Act - Load into new store
+	s2 := NewMemoryStore()
+	if err := s2.Load(snapshotFile); err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+
+	// Assert
+	if s2.Exists("any-key") {
+		t.Fatalf("Load() of empty store should be empty")
+	}
+}
+
+func TestLoadMissingFile(t *testing.T) {
+	// Arrange
+	tempDir := t.TempDir()
+	snapshotFile := filepath.Join(tempDir, "missing.json")
+	s := NewMemoryStore()
+
+	// Act
+	err := s.Load(snapshotFile)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Load() for missing file returned unexpected error: %v; expected nil (first-run)", err)
+	}
+}
+
+func TestLoadInvalidJSON(t *testing.T) {
+	// Arrange
+	tempDir := t.TempDir()
+	snapshotFile := filepath.Join(tempDir, "corrupted.json")
+	if err := os.WriteFile(snapshotFile, []byte("{ invalid json "), 0644); err != nil {
+		t.Fatalf("Failed to create corrupted file: %v", err)
+	}
+
+	s := NewMemoryStore()
+
+	// Act
+	err := s.Load(snapshotFile)
+
+	// Assert
+	if err == nil {
+		t.Fatalf("Load() for invalid JSON returned nil; expected an error")
 	}
 }

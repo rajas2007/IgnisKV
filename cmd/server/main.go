@@ -19,6 +19,10 @@ func main() {
 	flag.Parse()
 
 	s := store.NewMemoryStore()
+	if err := s.Load(store.DefaultSnapshotFile); err != nil {
+		log.Printf("Warning: failed to load snapshot: %v", err)
+	}
+
 	dispatcher := commands.NewDispatcher(s)
 
 	if *serverMode {
