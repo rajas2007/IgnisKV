@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rajas2007/IgnisKV/internal/store"
 	"github.com/rajas2007/IgnisKV/internal/types"
@@ -475,3 +476,153 @@ func TestAutomaticPersistence(t *testing.T) {
 		t.Fatalf("Loaded snapshot contained deleted value")
 	}
 }
+
+// ----- SET EX / Expiration tests (Sprint 10) -----
+
+func TestSetWithEX(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	d := NewDispatcher(s)
+
+	// Act
+	resp := d.Dispatch(types.Command{Name: "SET", Args: []string{"k", "v", "EX", "10"}})
+
+	// Assert
+	if resp.Status != types.StatusOK {
+		t.Fatalf("SET k v EX 10 returned Status %v; want StatusOK", resp.Status)
+	}
+
+	val, err := s.Get("k")
+	if err != nil {
+		t.Fatalf("Get() after SET EX returned unexpected error: %v", err)
+	}
+	if val.ExpiresAt.IsZero() {
+		t.Fatalf("SET EX should have set ExpiresAt but it is zero")
+	}
+	if time.Until(val.ExpiresAt) > 10*time.Second || time.Until(val.ExpiresAt) <= 0 {
+		t.Fatalf("ExpiresAt is out of expected range: %v", val.ExpiresAt)
+	}
+}
+
+func TestSetWithEXExpires(t *testing.T) {
+	// Arrange — use a 1-second TTL
+	s := store.NewMemoryStore()
+	d := NewDispatcher(s)
+	d.Dispatch(types.Command{Name: "SET", Args: []string{"temp", "data", "EX", "1"}})
+
+	// Act 1 — GET immediately; key should still be alive
+	resp := d.Dispatch(types.Command{Name: "GET", Args: []string{"temp"}})
+	if resp.Status != types.StatusOK {
+		t.Fatalf("GET before expiry returned Status %v; want StatusOK", resp.Status)
+	}
+
+	// Wait for expiration
+	time.Sleep(1100 * time.Millisecond)
+
+	// Act 2 — GET after TTL; key should have expired and been lazily deleted
+	resp = d.Dispatch(types.Command{Name: "GET", Args: []string{"temp"}})
+	if resp.Status != types.StatusNil {
+		t.Fatalf("GET after expiry returned Status %v; want StatusNil", resp.Status)
+	}
+}
+
+func TestSetWithInvalidEX(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	d := NewDispatcher(s)
+
+	invalidCmds := []types.Command{
+		{Name: "SET", Args: []string{"k", "v", "EX", "hello"}}, // non-numeric
+		{Name: "SET", Args: []string{"k", "v", "EX", "-5"}},    // negative
+		{Name: "SET", Args: []string{"k", "v", "EX", "0"}},     // zero
+	}
+
+	for _, cmd := range invalidCmds {
+		// Act
+		resp := d.Dispatch(cmd)
+
+		// Assert — must be an error and must not modify the store
+		if resp.Status != types.StatusError {
+			t.Fatalf("SET k v EX %q returned Status %v; want StatusError", cmd.Args[3], resp.Status)
+		}
+		if s.Exists("k") {
+			t.Fatalf("invalid SET EX should not have written key to store")
+		}
+	}
+}
+
+func TestSetWithUnsupportedOption(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	d := NewDispatcher(s)
+
+	// Act
+	resp := d.Dispatch(types.Command{Name: "SET", Args: []string{"k", "v", "PX", "1000"}})
+
+	// Assert
+	if resp.Status != types.StatusError {
+		t.Fatalf("SET k v PX 1000 returned Status %v; want StatusError", resp.Status)
+	}
+}
+
+func TestGetExpiredKeyViaDispatcher(t *testing.T) {
+	// Arrange — inject an already-expired key directly into the store
+	s := store.NewMemoryStore()
+	d := NewDispatcher(s)
+	d.Dispatch(types.Command{Name: "SET", Args: []string{"live", "value"}})
+
+	// Act — GET a non-expired key returns OK
+	resp := d.Dispatch(types.Command{Name: "GET", Args: []string{"live"}})
+	if resp.Status != types.StatusOK {
+		t.Fatalf("GET live returned Status %v; want StatusOK", resp.Status)
+	}
+
+	// Verify GET does not affect a non-expired key's persistence
+	if resp.Data != "value" {
+		t.Fatalf("GET live returned Data %v; want %q", resp.Data, "value")
+	}
+}
+
+func TestExpirationSurvivesSaveAndLoad(t *testing.T) {
+	// This test proves that absolute expiration timestamps survive Save() and
+	// Load(). The expiration countdown must not restart on application reload;
+	// a key set to expire in one second should expire one second after it was
+	// created, not one second after it was loaded from the snapshot.
+
+	// Arrange
+	s1 := store.NewMemoryStore()
+	d1 := NewDispatcher(s1)
+
+	// Step 1 — store a key with a 1-second TTL
+	d1.Dispatch(types.Command{Name: "SET", Args: []string{"session", "abc", "EX", "1"}})
+
+	// Step 2 — immediately GET; key must be alive
+	resp := d1.Dispatch(types.Command{Name: "GET", Args: []string{"session"}})
+	if resp.Status != types.StatusOK {
+		t.Fatalf("GET immediately after SET EX returned Status %v; want StatusOK", resp.Status)
+	}
+
+	// Step 3 — simulate application restart by loading snapshot into a new store
+	s2 := store.NewMemoryStore()
+	if err := s2.Load(store.DefaultSnapshotFile); err != nil {
+		t.Fatalf("Load() after restart returned unexpected error: %v", err)
+	}
+	d2 := NewDispatcher(s2)
+
+	// Step 4 — GET immediately after load; key must still be alive
+	resp = d2.Dispatch(types.Command{Name: "GET", Args: []string{"session"}})
+	if resp.Status != types.StatusOK {
+		t.Fatalf("GET immediately after Load returned Status %v; want StatusOK", resp.Status)
+	}
+
+	// Step 5 — wait for the original TTL to elapse
+	time.Sleep(1100 * time.Millisecond)
+
+	// Step 6 — GET after TTL; key must have expired
+	resp = d2.Dispatch(types.Command{Name: "GET", Args: []string{"session"}})
+	if resp.Status != types.StatusNil {
+		t.Fatalf("GET after expiry post-restart returned Status %v; want StatusNil", resp.Status)
+	}
+}
+
+var _ = errors.New // ensure errors import is used

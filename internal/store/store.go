@@ -43,11 +43,21 @@ func NewMemoryStore() *MemoryStore {
 // Save serializes the complete logical database state to the specified file
 // as a JSON snapshot. It acquires a read lock to block concurrent writers
 // while allowing concurrent readers to continue.
+//
+// Sprint 10: Save skips expired keys. This prevents expired data from being
+// revived after an application restart and keeps snapshots representative of
+// the logical database state rather than the physical in-memory map contents.
 func (s *MemoryStore) Save(filename string) error {
 	s.mu.RLock()
-	data, err := json.Marshal(s.data)
+	live := make(map[string]types.Value, len(s.data))
+	for k, v := range s.data {
+		if !isExpired(v) {
+			live[k] = v
+		}
+	}
 	s.mu.RUnlock()
 
+	data, err := json.Marshal(live)
 	if err != nil {
 		return fmt.Errorf("failed to serialize database state: %w", err)
 	}
@@ -110,6 +120,15 @@ func (s *MemoryStore) Load(filename string) error {
 
 	if parsedData == nil {
 		parsedData = make(map[string]types.Value)
+	}
+
+	// Filter expired entries discovered inside the snapshot.
+	// A key may have expired between the time the snapshot was written
+	// and the time it is being restored.
+	for k, v := range parsedData {
+		if isExpired(v) {
+			delete(parsedData, k)
+		}
 	}
 
 	s.mu.Lock()

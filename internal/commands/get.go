@@ -25,10 +25,11 @@ func NewGetHandler(store *store.MemoryStore) *GetHandler {
 // Execute handles the GET command.
 //
 // It expects exactly one argument: the key to retrieve. If the argument count
-// is incorrect it returns a StatusError response. When the key exists, it
-// returns a StatusOK response with the stored value in the Data field. When
-// the key does not exist, it returns a StatusNil response to distinguish the
-// absence of a value from an error condition. Any other storage error is
+// is incorrect it returns a StatusError response. When the key exists and has
+// not expired, it returns a StatusOK response with the stored value in the
+// Data field. When the key does not exist, or exists but has expired (in which
+// case it is lazily deleted), it returns a StatusNil response to distinguish
+// the absence of a value from an error condition. Any other storage error is
 // returned as a StatusError response.
 func (h *GetHandler) Execute(cmd types.Command) types.Response {
 	if len(cmd.Args) != 1 {
@@ -40,7 +41,7 @@ func (h *GetHandler) Execute(cmd types.Command) types.Response {
 
 	value, err := h.store.Get(cmd.Args[0])
 	if err != nil {
-		if errors.Is(err, store.ErrKeyNotFound) {
+		if errors.Is(err, store.ErrKeyNotFound) || errors.Is(err, store.ErrKeyExpired) {
 			return types.Response{
 				Status: types.StatusNil,
 			}

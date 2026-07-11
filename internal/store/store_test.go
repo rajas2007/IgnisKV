@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -231,5 +232,171 @@ func TestLoadInvalidJSON(t *testing.T) {
 	// Assert
 	if err == nil {
 		t.Fatalf("Load() for invalid JSON returned nil; expected an error")
+	}
+}
+
+// ----- Expiration tests (Sprint 10) -----
+
+func TestGetPersistentKey(t *testing.T) {
+	// Arrange — no ExpiresAt set
+	s := NewMemoryStore()
+	s.Set("key", types.Value{Type: types.StringType, Data: "value"})
+
+	// Act
+	got, err := s.Get("key")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Get() returned unexpected error for persistent key: %v", err)
+	}
+	if got.Data != "value" {
+		t.Fatalf("Get() Data = %v; want %q", got.Data, "value")
+	}
+}
+
+func TestGetExpiredKey(t *testing.T) {
+	// Arrange — set a key that expires immediately
+	s := NewMemoryStore()
+	s.Set("expiring", types.Value{
+		Type:      types.StringType,
+		Data:      "gone",
+		ExpiresAt: time.Now().Add(-1 * time.Millisecond),
+	})
+
+	// Act
+	_, err := s.Get("expiring")
+
+	// Assert
+	if !errors.Is(err, ErrKeyExpired) {
+		t.Fatalf("Get() returned %v; want ErrKeyExpired", err)
+	}
+
+	// Verify lazy deletion removed the key
+	if s.Exists("expiring") {
+		t.Fatalf("Get() should have lazily deleted the expired key")
+	}
+}
+
+func TestGetDeletesExpiredKeyLazily(t *testing.T) {
+	// Arrange
+	s := NewMemoryStore()
+	s.Set("ttl", types.Value{
+		Type:      types.StringType,
+		Data:      "temporary",
+		ExpiresAt: time.Now().Add(50 * time.Millisecond),
+	})
+
+	// Assert key is alive
+	if _, err := s.Get("ttl"); err != nil {
+		t.Fatalf("Get() before expiry returned unexpected error: %v", err)
+	}
+
+	// Wait for expiration
+	time.Sleep(60 * time.Millisecond)
+
+	// Assert key is expired
+	if _, err := s.Get("ttl"); !errors.Is(err, ErrKeyExpired) {
+		t.Fatalf("Get() after expiry returned %v; want ErrKeyExpired", err)
+	}
+
+	// Assert lazy deletion occurred
+	if s.Exists("ttl") {
+		t.Fatalf("Expired key should have been lazily deleted")
+	}
+}
+
+func TestSaveSkipsExpiredKeys(t *testing.T) {
+	// Arrange
+	tempDir := t.TempDir()
+	snapshotFile := filepath.Join(tempDir, "snap.json")
+
+	s := NewMemoryStore()
+	s.Set("alive", types.Value{Type: types.StringType, Data: "live"})
+	s.Set("dead", types.Value{
+		Type:      types.StringType,
+		Data:      "expired",
+		ExpiresAt: time.Now().Add(-1 * time.Millisecond),
+	})
+
+	// Act
+	if err := s.Save(snapshotFile); err != nil {
+		t.Fatalf("Save() returned unexpected error: %v", err)
+	}
+
+	// Reload into a fresh store and verify expired key is absent
+	s2 := NewMemoryStore()
+	if err := s2.Load(snapshotFile); err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+
+	if val, _ := s2.Get("alive"); val.Data != "live" {
+		t.Fatalf("Load() missing persistent key 'alive'")
+	}
+	if s2.Exists("dead") {
+		t.Fatalf("Load() should not have restored expired key 'dead'")
+	}
+}
+
+func TestLoadIgnoresExpiredEntries(t *testing.T) {
+	// Arrange — bypass Save()'s filter by writing directly to the internal map,
+	// then persist manually. This tests that Load() provides a second line of
+	// defence for snapshots written by older builds that lacked the filter.
+	tempDir := t.TempDir()
+	snapshotFile := filepath.Join(tempDir, "snap.json")
+
+	s1 := NewMemoryStore()
+	// Directly inject an expired entry into the internal map so it appears in
+	// the raw snapshot bytes, simulating a snapshot from a pre-Sprint-10 build.
+	s1.data["fresh"] = types.Value{Type: types.StringType, Data: "keep"}
+	s1.data["stale"] = types.Value{
+		Type:      types.StringType,
+		Data:      "remove",
+		ExpiresAt: time.Now().Add(-1 * time.Second),
+	}
+
+	// Write raw JSON directly without the expiration filter.
+	raw, _ := json.Marshal(s1.data)
+	_ = os.WriteFile(snapshotFile, raw, 0o644)
+
+	// Act — Load must filter the already-expired key.
+	s2 := NewMemoryStore()
+	if err := s2.Load(snapshotFile); err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+
+	// Assert
+	if val, _ := s2.Get("fresh"); val.Data != "keep" {
+		t.Fatalf("Load() missing persistent key 'fresh'")
+	}
+	if s2.Exists("stale") {
+		t.Fatalf("Load() should have filtered expired key 'stale'")
+	}
+}
+
+func TestPersistentKeysSurviveSaveAndLoad(t *testing.T) {
+	// Arrange
+	tempDir := t.TempDir()
+	snapshotFile := filepath.Join(tempDir, "snap.json")
+
+	s1 := NewMemoryStore()
+	s1.Set("name", types.Value{Type: types.StringType, Data: "Rajas"})
+	s1.Set("city", types.Value{Type: types.StringType, Data: "Pune"})
+
+	// Act
+	if err := s1.Save(snapshotFile); err != nil {
+		t.Fatalf("Save() returned unexpected error: %v", err)
+	}
+
+	s2 := NewMemoryStore()
+	if err := s2.Load(snapshotFile); err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+
+	// Assert
+	if val, _ := s2.Get("name"); val.Data != "Rajas" {
+		t.Fatalf("Load() name = %v; want %q", val.Data, "Rajas")
+	}
+	if val, _ := s2.Get("city"); val.Data != "Pune" {
+		t.Fatalf("Load() city = %v; want %q", val.Data, "Pune")
 	}
 }

@@ -1,6 +1,11 @@
 package commands
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/rajas2007/IgnisKV/internal/store"
 	"github.com/rajas2007/IgnisKV/internal/types"
 )
@@ -21,12 +26,17 @@ func NewSetHandler(store *store.MemoryStore) *SetHandler {
 
 // Execute handles the SET command.
 //
-// It expects exactly two arguments: a key and a value. If the argument count
-// is incorrect it returns a StatusError response. When valid, it constructs a
-// StringType Value and stores it via MemoryStore.Set, then returns a StatusOK
-// response with the message "OK".
+// It accepts two forms:
+//
+//	SET key value
+//	SET key value EX seconds
+//
+// If the argument count is incorrect it returns a StatusError response.
+// When a valid EX option is provided, the key is stored with an absolute
+// expiration timestamp. Invalid EX values (non-numeric, zero, or negative)
+// are rejected with a StatusError before the Store is modified.
 func (h *SetHandler) Execute(cmd types.Command) types.Response {
-	if len(cmd.Args) != 2 {
+	if len(cmd.Args) != 2 && len(cmd.Args) != 4 {
 		return types.Response{
 			Status:  types.StatusError,
 			Message: "wrong number of arguments",
@@ -36,6 +46,25 @@ func (h *SetHandler) Execute(cmd types.Command) types.Response {
 	value := types.Value{
 		Type: types.StringType,
 		Data: cmd.Args[1],
+	}
+
+	if len(cmd.Args) == 4 {
+		if !strings.EqualFold(cmd.Args[2], "EX") {
+			return types.Response{
+				Status:  types.StatusError,
+				Message: fmt.Sprintf("unsupported option: %s", cmd.Args[2]),
+			}
+		}
+
+		secs, err := strconv.ParseInt(cmd.Args[3], 10, 64)
+		if err != nil || secs <= 0 {
+			return types.Response{
+				Status:  types.StatusError,
+				Message: "invalid expire time in SET",
+			}
+		}
+
+		value.ExpiresAt = time.Now().Add(time.Duration(secs) * time.Second)
 	}
 
 	h.store.Set(cmd.Args[0], value)
