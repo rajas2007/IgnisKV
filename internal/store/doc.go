@@ -1,8 +1,8 @@
 // Package store implements the core storage engine of IgnisKV.
 //
-// It is the authoritative owner of the database's storage layer. It manages both
-// the volatile (memory) and durable (disk) representations of the data, as well
-// as the lifetime of every key stored in the database.
+// It is the authoritative owner of the database's storage layer. It manages
+// the physical storage of data, the durable persistence of state, and the
+// lifetime of every key stored in the database.
 //
 // # Responsibilities
 //
@@ -16,14 +16,24 @@
 //   - Automatic startup recovery from persisted snapshots.
 //   - Expiration metadata management.
 //   - Lazy expiration during key access.
+//   - Active (background) expiration.
+//   - Background cleanup of expired keys.
+//   - Lifetime management of keys.
+//   - Automatic expiration enforcement.
+//   - Coordination of lazy and active expiration.
 //   - Persistence of expiration timestamps.
 //   - Expiration-aware snapshot loading and restoration.
+//   - Remaining lifetime calculation.
+//   - TTL metadata inspection.
+//   - Read-only expiration queries.
+//   - Expiration state reporting.
 //
 // Persistence and expiration are both considered native features of the storage
 // layer rather than separate subsystems. All interactions with the database
 // keyspace, memory, or disk must go through this package. It is responsible for
-// serializing the current database state to disk and restoring previously
-// persisted state during startup.
+// serializing the current database state to disk, restoring previously
+// persisted state during startup, and ensuring that expired keys are removed
+// both on access and proactively in the background.
 //
 // # What Does NOT Belong Here
 //
@@ -37,14 +47,19 @@
 //
 // # Design Philosophy
 //
-// The Store package is responsible for both data storage and data lifetime.
-// Higher-level packages decide *when* data should be stored, persisted, or
-// expired (command policy), while the Store determines *how* expiration is
-// represented, checked, stored, restored, and enforced (mechanism).
+// The Store package is responsible for data storage, data lifetime, the removal
+// of expired data, and reporting expiration state. Higher-level packages decide
+// *when* commands execute and *when* to ask for TTL information (command policy).
+// The Store determines *how* data is stored, *how* data expires, *how* expired
+// data is removed, and *how* TTL is calculated (mechanism).
 //
-// This separation keeps persistence and expiration independent of command
-// execution, networking, and protocol concerns while allowing the storage
-// implementation to evolve without affecting the rest of the system.
+// TTL remains part of the storage mechanism rather than command policy.
+//
+// Neither the Server nor the Dispatcher knows anything about expiration
+// mechanics. Expiration remains an implementation detail of the Store. This
+// separation keeps persistence and expiration independent of command execution,
+// networking, and protocol concerns while allowing the storage implementation
+// to evolve without affecting the rest of the system.
 //
 // # Architecture
 //
@@ -59,14 +74,14 @@
 //	Dispatcher
 //	    ↓
 //	Store
-//	   ↙     ↘
-//	Memory   JSON Snapshot
+//	   ↙  ↓  ↘
+//	Memory Persistence Expiration
 //
-// Expiration is implemented inside the Store without introducing new packages
-// or changing the overall architecture. No higher-level package is aware of
-// expiration mechanics.
+// Background cleanup and TTL reporting are implemented entirely inside the Store
+// and do not alter the overall application architecture. No higher-level package
+// is aware of expiration mechanics or performs expiration calculations.
 //
-// # Current Scope (Sprint 10)
+// # Current Scope (Sprint 12)
 //
 // The Store currently supports:
 //   - Thread-safe in-memory storage.
@@ -77,11 +92,15 @@
 //   - Atomic snapshot writes.
 //   - Expiration metadata using ExpiresAt.
 //   - Lazy expiration during GET.
-//   - Persistence of expiration timestamps.
+//   - Active background expiration.
+//   - Expiration-aware persistence.
+//   - Concurrent-safe expiration cleanup.
+//   - TTL command support.
+//   - Remaining lifetime calculation.
+//   - Read-only expiration queries.
+//   - Centralized expiration observation.
 //
-// Sprint 10 intentionally implements lazy expiration only. Expired keys are
-// removed when discovered during access. Background expiration is intentionally
-// deferred to Sprint 11.
+// TTL reuses the existing expiration subsystem without introducing new metadata.
 //
 // # Current Limitations
 //
@@ -89,27 +108,36 @@
 // successful write, the in-memory state reflects the latest write while the
 // snapshot reflects the previous state. The server continues operating normally.
 //
-// Expiration is intentionally lazy. Expired keys may remain in memory until
-// accessed. No background cleanup exists yet. Active expiration will be
-// introduced in Sprint 11.
+// Cleanup scans the entire keyspace while holding a write lock. Sprint 11
+// intentionally favors correctness and simplicity over scalability. All client
+// operations pause briefly during a cleanup cycle. Future milestones may
+// introduce sampling, sharding, or finer-grained locking to reduce contention.
 //
-// # Future Scope
+// TTL reports whole seconds only. Millisecond precision is intentionally deferred.
+// TTL observes expiration but never modifies it.
 //
-// Future milestones may extend the Store with:
-//   - Background expiration.
-//   - TTL command.
-//   - EXPIRE command.
-//   - PERSIST command.
-//   - Append Only File (AOF).
-//   - Write-Ahead Logging (WAL).
-//   - Snapshot optimization.
-//   - Additional persistence strategies.
+// # Background Cleanup
+//
+// Each MemoryStore instance owns exactly one background cleanup goroutine.
+// The goroutine is started automatically by NewMemoryStore() and runs for the
+// lifetime of the application. It uses a fixed time.Ticker to periodically
+// wake, scan the keyspace, and remove expired keys.
+//
+// No shutdown mechanism exists in Sprint 11. Graceful shutdown using
+// context.Context is intentionally deferred to a future milestone.
+//
+// Tests should create only the MemoryStore instances they actually require
+// because each Store owns one background cleanup goroutine.
 //
 // # Engineering Notes
 //
-// Expiration mechanics are owned entirely by the Store. Expiration checks are
-// centralized through a private helper, providing a single definition of key
-// expiration that is reused by Get, Save, and Load.
+// Lazy expiration and active expiration coexist. Either mechanism may delete
+// the same key. This is safe because delete(map, key) on a missing key is a
+// no-op in Go. No additional coordination is required between the two paths.
+//
+// Expiration logic remains centralized through a single private helper,
+// providing one authoritative definition of key expiration that is reused by
+// Get, Save, Load, and the background cleanup goroutine.
 //
 // The helper performs no synchronization and has no side effects. Callers
 // remain responsible for lock management.
@@ -117,4 +145,66 @@
 // Synchronization remains owned entirely by MemoryStore using sync.RWMutex.
 // All expiration implementations must preserve the existing concurrency
 // guarantees.
+//
+// TTL is a read-only operation. TTL never performs persistence. TTL never changes
+// expiration policy. TTL reuses the centralized isExpired() helper.
+//
+// TTL follows the same check-then-act lazy expiration pattern used by Get():
+//
+//	Acquire RLock
+//	↓
+//	Read value
+//	↓
+//	Release RLock
+//	↓
+//	Check isExpired()
+//	↓
+//	Expired?
+//	↓
+//	Acquire Lock
+//	↓
+//	Verify key still exists
+//	↓
+//	Verify still expired
+//	↓
+//	Delete
+//	↓
+//	Release Lock
+//
+// This verification step prevents races where another goroutine modifies or
+// removes the key between the read and write locks. This check-then-act pattern
+// is now the standard concurrency pattern for every Store operation that
+// performs lazy expiration.
+//
+// The Store-layer contract for TTL() returns:
+//   - n >= 0, nil → key exists with n seconds remaining.
+//   - -1, nil → key exists without expiration.
+//   - 0, ErrKeyExpired → key expired and requires lazy deletion.
+//   - 0, ErrKeyNotFound → key does not exist.
+//
+// Higher-level handlers translate both ErrKeyExpired and ErrKeyNotFound into the
+// same client-visible response while preserving richer information inside the Store.
+//
+// # Future Scope
+//
+// Future milestones may extend the Store with:
+//
+// Expiration:
+//   - EXPIRE command.
+//   - PERSIST command.
+//   - Millisecond precision expiration.
+//   - Expiration statistics.
+//   - Configurable time precision.
+//   - Configurable cleanup interval.
+//   - Redis-style sampling.
+//
+// Lifecycle:
+//   - Graceful goroutine shutdown.
+//   - Context cancellation.
+//
+// Persistence:
+//   - Append Only File (AOF).
+//   - Write-Ahead Logging (WAL).
+//   - Snapshot optimization.
+//   - Additional persistence strategies.
 package store

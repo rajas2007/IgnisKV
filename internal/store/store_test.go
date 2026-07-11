@@ -400,3 +400,58 @@ func TestPersistentKeysSurviveSaveAndLoad(t *testing.T) {
 		t.Fatalf("Load() city = %v; want %q", val.Data, "Pune")
 	}
 }
+
+func TestActiveExpirationDeletesKeys(t *testing.T) {
+	// Arrange — use a very aggressive cleanup interval for testing
+	s := newMemoryStoreWithInterval(10 * time.Millisecond)
+
+	s.Set("ephemeral", types.Value{
+		Type:      types.StringType,
+		Data:      "short-lived",
+		ExpiresAt: time.Now().Add(50 * time.Millisecond),
+	})
+
+	// Assert key exists physically initially
+	if !s.Exists("ephemeral") {
+		t.Fatalf("expected key to exist physically before expiration")
+	}
+
+	// Act — Wait for the key to expire and the cleanup ticker to fire a few times
+	time.Sleep(100 * time.Millisecond)
+
+	// Assert key has been deleted physically by the background goroutine
+	// without any Get() call triggering lazy deletion.
+	if s.Exists("ephemeral") {
+		t.Fatalf("expected key to be physically deleted by background cleanup")
+	}
+}
+
+func TestConcurrentAccessDuringCleanup(t *testing.T) {
+	// Arrange — aggressively run cleanup to maximize contention
+	s := newMemoryStoreWithInterval(1 * time.Millisecond)
+
+	// Add a persistent key
+	s.Set("persistent", types.Value{Type: types.StringType, Data: "forever"})
+
+	// Act — Run a tight loop of Sets and Gets while the cleanup goroutine
+	// continuously acquires the write lock and scans the keyspace.
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 1000; i++ {
+			s.Set("temp", types.Value{
+				Type:      types.StringType,
+				Data:      "temp",
+				ExpiresAt: time.Now().Add(1 * time.Millisecond),
+			})
+			s.Get("persistent")
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success — no deadlocks or panics
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Test timed out, possible deadlock")
+	}
+}

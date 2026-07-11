@@ -33,10 +33,39 @@ type MemoryStore struct {
 }
 
 // NewMemoryStore allocates and initialises a new MemoryStore with an empty
-// keyspace ready to accept database operations.
+// keyspace ready to accept database operations. It automatically starts the
+// background cleanup goroutine for active expiration.
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{
+	return newMemoryStoreWithInterval(5 * time.Minute)
+}
+
+// newMemoryStoreWithInterval allows tests to instantiate a MemoryStore with
+// a short cleanup interval without mutating global state.
+func newMemoryStoreWithInterval(interval time.Duration) *MemoryStore {
+	s := &MemoryStore{
 		data: make(map[string]types.Value),
+	}
+	go s.startCleanupGoroutine(interval)
+	return s
+}
+
+// startCleanupGoroutine runs a continuous loop that periodically scans the
+// entire keyspace and deletes expired keys. It runs for the lifetime of the
+// application and provides eventual cleanup of keys that are never accessed.
+//
+// Sprint 11: The entire scan runs under a single write lock to prioritize
+// correctness and simplicity over scalability.
+func (s *MemoryStore) startCleanupGoroutine(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.mu.Lock()
+		for key, value := range s.data {
+			if isExpired(value) {
+				delete(s.data, key)
+			}
+		}
+		s.mu.Unlock()
 	}
 }
 
