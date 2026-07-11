@@ -27,6 +27,11 @@
 //   - TTL metadata inspection.
 //   - Read-only expiration queries.
 //   - Expiration state reporting.
+//   - Expiration metadata modification.
+//   - EXPIRE command support.
+//   - Updating key lifetime.
+//   - Expiration policy enforcement.
+//   - Expiration metadata persistence.
 //
 // Persistence and expiration are both considered native features of the storage
 // layer rather than separate subsystems. All interactions with the database
@@ -48,12 +53,14 @@
 // # Design Philosophy
 //
 // The Store package is responsible for data storage, data lifetime, the removal
-// of expired data, and reporting expiration state. Higher-level packages decide
-// *when* commands execute and *when* to ask for TTL information (command policy).
+// of expired data, reporting expiration state, and modifying expiration.
+// Higher-level packages decide *when* commands execute, *when* to ask for TTL
+// information, and *when* expiration should change (command policy).
 // The Store determines *how* data is stored, *how* data expires, *how* expired
-// data is removed, and *how* TTL is calculated (mechanism).
+// data is removed, *how* TTL is calculated, and *how* expiration changes (mechanism).
 //
-// TTL remains part of the storage mechanism rather than command policy.
+// Handlers never manipulate timestamps. The Store remains the single owner
+// of expiration semantics.
 //
 // Neither the Server nor the Dispatcher knows anything about expiration
 // mechanics. Expiration remains an implementation detail of the Store. This
@@ -74,14 +81,17 @@
 //	Dispatcher
 //	    ↓
 //	Store
-//	   ↙  ↓  ↘
+//	   ↙    ↓      ↘
 //	Memory Persistence Expiration
+//	               ↙        ↘
+//	             TTL      EXPIRE
 //
-// Background cleanup and TTL reporting are implemented entirely inside the Store
-// and do not alter the overall application architecture. No higher-level package
-// is aware of expiration mechanics or performs expiration calculations.
+// Background cleanup, TTL reporting, and EXPIRE modifications are implemented
+// entirely inside the Store and do not alter the overall application architecture.
+// No higher-level package is aware of expiration mechanics, performs expiration
+// calculations, or manipulates timestamps.
 //
-// # Current Scope (Sprint 12)
+// # Current Scope (Sprint 13)
 //
 // The Store currently supports:
 //   - Thread-safe in-memory storage.
@@ -95,12 +105,21 @@
 //   - Active background expiration.
 //   - Expiration-aware persistence.
 //   - Concurrent-safe expiration cleanup.
-//   - TTL infrastructure.
+//   - TTL command support.
 //   - Remaining lifetime calculation.
 //   - Read-only expiration queries.
 //   - Centralized expiration observation.
+//   - EXPIRE infrastructure.
+//   - Expiration updates.
+//   - Expiration metadata modification.
+//   - Updating existing TTL.
+//   - Converting persistent keys into expiring keys.
+//   - Automatic persistence after expiration updates.
+//   - Shared lazy expiration infrastructure.
+//   - Shared expiration lifecycle.
 //
-// TTL reuses the existing expiration subsystem without introducing new metadata.
+// Both TTL and EXPIRE reuse the existing expiration subsystem without
+// introducing a second implementation or new metadata.
 //
 // # Current Limitations
 //
@@ -115,6 +134,10 @@
 //
 // TTL reports whole seconds only. Millisecond precision is intentionally deferred.
 // TTL observes expiration but never modifies it.
+//
+// EXPIRE currently supports only relative durations measured in seconds.
+// Millisecond precision remains deferred. Absolute expiration commands
+// remain future work.
 //
 // # Background Cleanup
 //
@@ -147,7 +170,34 @@
 // guarantees.
 //
 // TTL is a read-only operation. TTL never performs persistence. TTL never changes
-// expiration policy. TTL reuses the centralized isExpired() helper.
+// expiration policy.
+//
+// EXPIRE reuses:
+//   - isExpired()
+//   - lazyExpire()
+//   - ExpiresAt
+//   - background cleanup
+//   - Save()
+//   - Load()
+//   - TTL()
+//
+// The Store remains the single authoritative owner of expiration metadata.
+//
+// Engineering Rule:
+//
+// Any command that reads or modifies a key must verify expiration before
+// operating on it. If the key has already expired, it is lazily removed and
+// treated as absent.
+//
+// Persistence Rule: Any command that modifies logical database state (data
+// or metadata) automatically triggers persistence.
+//
+// The current write commands are:
+//   - SET
+//   - DEL
+//   - EXPIRE
+//
+// Future write commands are expected to follow the same persistence rule.
 //
 // TTL follows the same check-then-act lazy expiration pattern used by Get():
 //
@@ -190,13 +240,12 @@
 // Future milestones may extend the Store with:
 //
 // Expiration:
-//   - EXPIRE command.
+//   - Absolute expiration commands.
 //   - PERSIST command.
 //   - Millisecond precision expiration.
 //   - Configurable cleanup interval.
 //   - Expiration statistics.
-//   - Configurable time precision.
-//   - Redis-style sampling.
+//   - Redis-style sampling improvements.
 //
 // Lifecycle:
 //   - Graceful goroutine shutdown.

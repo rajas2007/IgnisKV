@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -535,6 +536,154 @@ func TestTTLPersistsAcrossSaveLoad(t *testing.T) {
 
 	// 5 seconds rounded up might be exactly 5, but after a few ms it could still be 5 because of math.Ceil
 	// Just ensure it is 4 or 5
+	if ttl < 4 || ttl > 5 {
+		t.Fatalf("expected TTL between 4 and 5 seconds, got %d", ttl)
+	}
+}
+
+func TestExpire(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	res, err := s.Expire("missing", 5)
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	}
+	if res != 0 {
+		t.Fatalf("expected 0 result for missing key, got %d", res)
+	}
+
+	// 2. Invalid duration
+	s.Set("key1", types.Value{Type: types.StringType, Data: "val1"})
+	res, err = s.Expire("key1", 0)
+	if !errors.Is(err, ErrInvalidDuration) {
+		t.Fatalf("expected ErrInvalidDuration for 0, got %v", err)
+	}
+	res, err = s.Expire("key1", -5)
+	if !errors.Is(err, ErrInvalidDuration) {
+		t.Fatalf("expected ErrInvalidDuration for negative, got %v", err)
+	}
+
+	// 3. Expire existing persistent key
+	res, err = s.Expire("key1", 10)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if res != 1 {
+		t.Fatalf("expected 1 result, got %d", res)
+	}
+
+	// Verify with TTL
+	ttl, _ := s.TTL("key1")
+	if ttl < 9 || ttl > 10 {
+		t.Fatalf("expected TTL between 9 and 10, got %d", ttl)
+	}
+
+	// 4. Replace existing expiration
+	res, err = s.Expire("key1", 20)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if res != 1 {
+		t.Fatalf("expected 1 result, got %d", res)
+	}
+
+	ttl, _ = s.TTL("key1")
+	if ttl < 19 || ttl > 20 {
+		t.Fatalf("expected TTL between 19 and 20, got %d", ttl)
+	}
+
+	// 5. Expire already expired key
+	s.Set("expired_key", types.Value{
+		Type:      types.StringType,
+		Data:      "val",
+		ExpiresAt: time.Now().Add(-1 * time.Second),
+	})
+
+	res, err = s.Expire("expired_key", 5)
+	if !errors.Is(err, ErrKeyExpired) {
+		t.Fatalf("expected ErrKeyExpired, got %v", err)
+	}
+	if res != 0 {
+		t.Fatalf("expected 0 result, got %d", res)
+	}
+
+	// Verify it was lazily deleted
+	if s.Exists("expired_key") {
+		t.Fatalf("expected expired_key to be physically deleted")
+	}
+
+	// 6. Expire followed by Get
+	s.Set("key2", types.Value{Type: types.StringType, Data: "val2"})
+	s.Expire("key2", 1)
+	val, err := s.Get("key2")
+	if err != nil {
+		t.Fatalf("expected nil error on Get, got %v", err)
+	}
+	if val.Data != "val2" {
+		t.Fatalf("expected val2, got %v", val.Data)
+	}
+}
+
+func TestConcurrentExpire(t *testing.T) {
+	s := newMemoryStoreWithInterval(1 * time.Hour) // no background cleanup needed
+	s.Set("concurrent_key", types.Value{Type: types.StringType, Data: "val"})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(dur int64) {
+			defer wg.Done()
+			if _, err := s.Expire("concurrent_key", dur); err != nil && !errors.Is(err, ErrKeyExpired) {
+				t.Errorf("Concurrent Expire failed: %v", err)
+			}
+		}(int64((i % 5) + 1)) // Durations 1 to 5
+	}
+	wg.Wait()
+
+	// Verify key still exists and has some TTL
+	ttl, err := s.TTL("concurrent_key")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if ttl < 1 || ttl > 5 {
+		t.Fatalf("expected TTL between 1 and 5, got %d", ttl)
+	}
+}
+
+func TestExpirePersistsAcrossSaveLoad(t *testing.T) {
+	s1 := NewMemoryStore()
+
+	s1.Set("persistent_key", types.Value{
+		Type: types.StringType,
+		Data: "some-data",
+	})
+
+	// Set expiration
+	res, err := s1.Expire("persistent_key", 5)
+	if err != nil {
+		t.Fatalf("Expire() returned unexpected error: %v", err)
+	}
+	if res != 1 {
+		t.Fatalf("expected 1 result, got %d", res)
+	}
+
+	snapshotFile := filepath.Join(t.TempDir(), "expire_persistence_test.json")
+
+	if err := s1.Save(snapshotFile); err != nil {
+		t.Fatalf("Save() returned unexpected error: %v", err)
+	}
+
+	s2 := NewMemoryStore()
+	if err := s2.Load(snapshotFile); err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+
+	ttl, err := s2.TTL("persistent_key")
+	if err != nil {
+		t.Fatalf("TTL() returned unexpected error: %v", err)
+	}
+
 	if ttl < 4 || ttl > 5 {
 		t.Fatalf("expected TTL between 4 and 5 seconds, got %d", ttl)
 	}

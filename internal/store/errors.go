@@ -10,3 +10,7 @@ var ErrKeyNotFound = errors.New("key not found")
 // in the keyspace but its expiration time has passed. It is defined now as it
 // belongs to the storage domain, ahead of TTL implementation.
 var ErrKeyExpired = errors.New("key expired")
+
+// ErrInvalidDuration is returned when an expiration command is provided with
+// a zero or negative duration.
+var ErrInvalidDuration = errors.New("invalid duration")

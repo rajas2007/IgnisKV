@@ -27,6 +27,8 @@ func NewDispatcher(s *store.MemoryStore) *Dispatcher {
 	d.handlers["SET"] = NewSetHandler(s)
 	d.handlers["GET"] = NewGetHandler(s)
 	d.handlers["DEL"] = NewDelHandler(s)
+	d.handlers["TTL"] = NewTTLHandler(s)
+	d.handlers["EXPIRE"] = NewExpireHandler(s)
 	d.handlers["SAVE"] = NewSaveHandler(s)
 	d.handlers["HELP"] = NewHelpHandler()
 	d.handlers["QUIT"] = NewQuitHandler()

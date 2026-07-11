@@ -24,6 +24,10 @@ const (
 	// to exit through this status value rather than requiring higher layers to inspect
 	// command names, keeping command semantics inside the command package.
 	StatusExit
+
+	// StatusInteger indicates that the command returns an integer reply.
+	// Data holds the string representation of the integer.
+	StatusInteger
 )
 
 // Response represents the result of a command handler's execution.

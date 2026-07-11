@@ -119,8 +119,58 @@ func (s *MemoryStore) lazyExpire(key string) bool {
 
 	current, ok := s.data[key]
 	if ok && isExpired(current) {
-		delete(s.data, key)
+		s.deleteExpiredLocked(key)
 		return true
 	}
 	return false
+}
+
+// deleteExpiredLocked removes the given key from the keyspace. It assumes
+// the caller already holds the write lock and has verified the key is expired.
+func (s *MemoryStore) deleteExpiredLocked(key string) {
+	delete(s.data, key)
+}
+
+// Expire updates the expiration time of an existing key. It returns 1 if the
+// expiration was successfully set. Otherwise returns 0 together with an
+// appropriate Store error. Non-positive durations are rejected with
+// ErrInvalidDuration.
+//
+// Sprint 13: Expire performs lazy expiration using the check-then-act
+// concurrency pattern. It never modifies the stored value, only the ExpiresAt field.
+func (s *MemoryStore) Expire(key string, seconds int64) (int64, error) {
+	if seconds <= 0 {
+		return 0, ErrInvalidDuration
+	}
+
+	s.mu.RLock()
+	v, ok := s.data[key]
+	s.mu.RUnlock()
+
+	if !ok {
+		return 0, ErrKeyNotFound
+	}
+
+	if isExpired(v) {
+		s.lazyExpire(key)
+		return 0, ErrKeyExpired
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Re-verify the key exists and hasn't expired since releasing the read lock
+	current, ok := s.data[key]
+	if !ok {
+		return 0, ErrKeyNotFound
+	}
+	if isExpired(current) {
+		s.deleteExpiredLocked(key)
+		return 0, ErrKeyExpired
+	}
+
+	current.ExpiresAt = time.Now().Add(time.Duration(seconds) * time.Second)
+	s.data[key] = current
+
+	return 1, nil
 }

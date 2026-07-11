@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -330,4 +331,69 @@ func TestServerConcurrentSharedKey(t *testing.T) {
 	for err := range errCh {
 		t.Errorf("Concurrent shared key client error: %v", err)
 	}
+}
+
+func TestIntegrationExpire(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	dispatcher := commands.NewDispatcher(s)
+	srv := server.New(dispatcher)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to find free port: %v", err)
+	}
+	address := l.Addr().String()
+	l.Close()
+
+	go func() {
+		_ = srv.Start(address)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 1024)
+	sendAndVerify := func(cmd string, expected string) string {
+		if _, err := conn.Write([]byte(cmd)); err != nil {
+			t.Fatalf("Write error: %v", err)
+		}
+		n, err := conn.Read(buf)
+		if err != nil {
+			t.Fatalf("Read error: %v", err)
+		}
+		response := string(buf[:n])
+		if expected != "" && response != expected {
+			t.Fatalf("Expected %q, got %q", expected, response)
+		}
+		return response
+	}
+
+	// SET key1 val1
+	sendAndVerify("*3\r\n$3\r\nSET\r\n$4\r\nkey1\r\n$4\r\nval1\r\n", "+OK\r\n")
+
+	// EXPIRE key1 5
+	sendAndVerify("*3\r\n$6\r\nEXPIRE\r\n$4\r\nkey1\r\n$1\r\n5\r\n", ":1\r\n")
+
+	// TTL key1
+	response := sendAndVerify("*2\r\n$3\r\nTTL\r\n$4\r\nkey1\r\n", "")
+	if !strings.HasPrefix(response, ":") || !strings.HasSuffix(response, "\r\n") {
+		t.Fatalf("Expected integer response, got %q", response)
+	}
+	ttlStr := response[1 : len(response)-2]
+	ttl, err := strconv.Atoi(ttlStr)
+	if err != nil {
+		t.Fatalf("Expected integer TTL, got %q", ttlStr)
+	}
+	if ttl < 4 || ttl > 5 {
+		t.Fatalf("Expected TTL 4 or 5, got %d", ttl)
+	}
+
+	// EXPIRE missing_key 5
+	sendAndVerify("*3\r\n$6\r\nEXPIRE\r\n$11\r\nmissing_key\r\n$1\r\n5\r\n", ":0\r\n")
 }

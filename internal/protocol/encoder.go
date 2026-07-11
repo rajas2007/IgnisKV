@@ -26,6 +26,9 @@ func EncodeRESP(resp types.Response) []byte {
 	case types.StatusError:
 		return []byte(fmt.Sprintf("-ERR %s\r\n", resp.Message))
 
+	case types.StatusInteger:
+		return []byte(fmt.Sprintf(":%v\r\n", resp.Data))
+
 	case types.StatusExit:
 		return []byte("+BYE\r\n")
 
