@@ -455,3 +455,87 @@ func TestConcurrentAccessDuringCleanup(t *testing.T) {
 		t.Fatalf("Test timed out, possible deadlock")
 	}
 }
+
+func TestTTL(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	_, err := s.TTL("missing")
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("expected ErrKeyNotFound for missing key, got %v", err)
+	}
+
+	// 2. Persistent key
+	s.Set("persistent", types.Value{Type: types.StringType, Data: "forever"})
+	ttl, err := s.TTL("persistent")
+	if err != nil {
+		t.Fatalf("expected nil error for persistent key, got %v", err)
+	}
+	if ttl != -1 {
+		t.Fatalf("expected TTL -1 for persistent key, got %d", ttl)
+	}
+
+	// 3. Expiring key (future)
+	s.Set("expiring", types.Value{
+		Type:      types.StringType,
+		Data:      "short-lived",
+		ExpiresAt: time.Now().Add(5 * time.Second),
+	})
+	ttl, err = s.TTL("expiring")
+	if err != nil {
+		t.Fatalf("expected nil error for expiring key, got %v", err)
+	}
+	if ttl < 4 || ttl > 5 {
+		t.Fatalf("expected TTL between 4 and 5 seconds, got %d", ttl)
+	}
+
+	// 4. Expired key (past)
+	s.Set("expired", types.Value{
+		Type:      types.StringType,
+		Data:      "dead",
+		ExpiresAt: time.Now().Add(-1 * time.Second), // Expired 1 second ago
+	})
+	ttl, err = s.TTL("expired")
+	if !errors.Is(err, ErrKeyExpired) {
+		t.Fatalf("expected ErrKeyExpired for expired key, got %v", err)
+	}
+	if ttl != 0 {
+		t.Fatalf("expected TTL 0 for expired key, got %d", ttl)
+	}
+	// Verify lazy deletion occurred
+	if s.Exists("expired") {
+		t.Fatalf("expected expired key to be lazily deleted by TTL")
+	}
+}
+
+func TestTTLPersistsAcrossSaveLoad(t *testing.T) {
+	s1 := NewMemoryStore()
+
+	s1.Set("expiring_key", types.Value{
+		Type:      types.StringType,
+		Data:      "some-data",
+		ExpiresAt: time.Now().Add(5 * time.Second),
+	})
+
+	snapshotFile := filepath.Join(t.TempDir(), "ttl_persistence_test.json")
+
+	if err := s1.Save(snapshotFile); err != nil {
+		t.Fatalf("Save() returned unexpected error: %v", err)
+	}
+
+	s2 := NewMemoryStore()
+	if err := s2.Load(snapshotFile); err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+
+	ttl, err := s2.TTL("expiring_key")
+	if err != nil {
+		t.Fatalf("TTL() returned unexpected error: %v", err)
+	}
+
+	// 5 seconds rounded up might be exactly 5, but after a few ms it could still be 5 because of math.Ceil
+	// Just ensure it is 4 or 5
+	if ttl < 4 || ttl > 5 {
+		t.Fatalf("expected TTL between 4 and 5 seconds, got %d", ttl)
+	}
+}

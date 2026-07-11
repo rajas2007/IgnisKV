@@ -1,6 +1,11 @@
 package store
 
-import "github.com/rajas2007/IgnisKV/internal/types"
+import (
+	"math"
+	"time"
+
+	"github.com/rajas2007/IgnisKV/internal/types"
+)
 
 // Set stores a value under the given key in the keyspace. If the key already
 // exists its value is overwritten.
@@ -28,16 +33,7 @@ func (s *MemoryStore) Get(key string) (types.Value, error) {
 	}
 
 	if isExpired(v) {
-		// Re-acquire as a write lock and re-verify before deleting.
-		// Another goroutine may have overwritten the key in the window
-		// between releasing the read lock and acquiring the write lock.
-		s.mu.Lock()
-		current, ok := s.data[key]
-		if ok && isExpired(current) {
-			delete(s.data, key)
-		}
-		s.mu.Unlock()
-
+		s.lazyExpire(key)
 		return types.Value{}, ErrKeyExpired
 	}
 
@@ -74,4 +70,57 @@ func (s *MemoryStore) Exists(key string) bool {
 	_, ok := s.data[key]
 
 	return ok
+}
+
+// TTL returns the remaining lifetime of the given key in whole seconds.
+// It returns -1 if the key exists but has no associated expiration.
+// It returns ErrKeyNotFound if the key does not exist.
+//
+// Sprint 12: TTL performs lazy expiration using the same check-then-act
+// concurrency pattern established by Get(). If the key is found to be
+// expired, it is deleted and ErrKeyExpired is returned.
+func (s *MemoryStore) TTL(key string) (int64, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+	s.mu.RUnlock()
+
+	if !ok {
+		return 0, ErrKeyNotFound
+	}
+
+	if isExpired(v) {
+		s.lazyExpire(key)
+		return 0, ErrKeyExpired
+	}
+
+	if v.ExpiresAt.IsZero() {
+		return -1, nil
+	}
+
+	remaining := v.ExpiresAt.Sub(time.Now())
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	// Round up to ensure that a key with <1s remaining does not return 0,
+	// which would misleadingly imply it has already expired.
+	seconds := int64(math.Ceil(remaining.Seconds()))
+	return seconds, nil
+}
+
+// lazyExpire performs the check-then-act concurrency pattern to safely delete
+// a key that has passed its expiration deadline. It acquires a write lock and
+// re-verifies the key's state to prevent deleting a value that was updated by
+// another goroutine between the read and write locks.
+// It returns true if the key was deleted, false otherwise.
+func (s *MemoryStore) lazyExpire(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	current, ok := s.data[key]
+	if ok && isExpired(current) {
+		delete(s.data, key)
+		return true
+	}
+	return false
 }

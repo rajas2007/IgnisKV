@@ -95,7 +95,7 @@
 //   - Active background expiration.
 //   - Expiration-aware persistence.
 //   - Concurrent-safe expiration cleanup.
-//   - TTL command support.
+//   - TTL infrastructure.
 //   - Remaining lifetime calculation.
 //   - Read-only expiration queries.
 //   - Centralized expiration observation.
@@ -123,8 +123,8 @@
 // lifetime of the application. It uses a fixed time.Ticker to periodically
 // wake, scan the keyspace, and remove expired keys.
 //
-// No shutdown mechanism exists in Sprint 11. Graceful shutdown using
-// context.Context is intentionally deferred to a future milestone.
+// No shutdown mechanism currently exists.
+// Graceful shutdown using context.Context is intentionally deferred to a future milestone.
 //
 // Tests should create only the MemoryStore instances they actually require
 // because each Store owns one background cleanup goroutine.
@@ -193,9 +193,9 @@
 //   - EXPIRE command.
 //   - PERSIST command.
 //   - Millisecond precision expiration.
+//   - Configurable cleanup interval.
 //   - Expiration statistics.
 //   - Configurable time precision.
-//   - Configurable cleanup interval.
 //   - Redis-style sampling.
 //
 // Lifecycle:
