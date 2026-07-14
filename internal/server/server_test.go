@@ -397,3 +397,80 @@ func TestIntegrationExpire(t *testing.T) {
 	// EXPIRE missing_key 5
 	sendAndVerify("*3\r\n$6\r\nEXPIRE\r\n$11\r\nmissing_key\r\n$1\r\n5\r\n", ":0\r\n")
 }
+
+func TestIntegrationPersist(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	dispatcher := commands.NewDispatcher(s)
+	srv := server.New(dispatcher)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to find free port: %v", err)
+	}
+	address := l.Addr().String()
+	l.Close()
+
+	go func() {
+		_ = srv.Start(address)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 1024)
+	sendAndVerify := func(cmd string, expected string) string {
+		if _, err := conn.Write([]byte(cmd)); err != nil {
+			t.Fatalf("Write error: %v", err)
+		}
+		n, err := conn.Read(buf)
+		if err != nil {
+			t.Fatalf("Read error: %v", err)
+		}
+		response := string(buf[:n])
+		if expected != "" && response != expected {
+			t.Fatalf("Expected %q, got %q", expected, response)
+		}
+		return response
+	}
+
+	// 1. SET key value
+	sendAndVerify("*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n", "+OK\r\n")
+
+	// 2. EXPIRE key 5
+	sendAndVerify("*3\r\n$6\r\nEXPIRE\r\n$3\r\nkey\r\n$1\r\n5\r\n", ":1\r\n")
+
+	// 3. TTL key → 5 or 4
+	response := sendAndVerify("*2\r\n$3\r\nTTL\r\n$3\r\nkey\r\n", "")
+	ttlStr := response[1 : len(response)-2]
+	ttl, err := strconv.Atoi(ttlStr)
+	if err != nil {
+		t.Fatalf("Expected integer TTL, got %q", ttlStr)
+	}
+	if ttl < 3 || ttl > 5 {
+		t.Fatalf("Expected TTL 3-5, got %d", ttl)
+	}
+
+	// 4. PERSIST key → :1
+	sendAndVerify("*2\r\n$7\r\nPERSIST\r\n$3\r\nkey\r\n", ":1\r\n")
+
+	// 5. TTL key → :-1 (now persistent)
+	sendAndVerify("*2\r\n$3\r\nTTL\r\n$3\r\nkey\r\n", ":-1\r\n")
+
+	// 6. PERSIST key again → :0 (already persistent)
+	sendAndVerify("*2\r\n$7\r\nPERSIST\r\n$3\r\nkey\r\n", ":0\r\n")
+
+	// 7. GET key → value still exists
+	response = sendAndVerify("*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n", "")
+	if response != "$5\r\nvalue\r\n" {
+		t.Fatalf("Expected value after PERSIST, got %q", response)
+	}
+
+	// 8. PERSIST missing_key → :0
+	sendAndVerify("*2\r\n$7\r\nPERSIST\r\n$11\r\nmissing_key\r\n", ":0\r\n")
+}

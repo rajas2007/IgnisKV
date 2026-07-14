@@ -174,3 +174,54 @@ func (s *MemoryStore) Expire(key string, seconds int64) (int64, error) {
 
 	return 1, nil
 }
+
+// Persist removes the expiration from an existing key, converting it back into
+// a persistent key. It returns 1 if an expiration was successfully removed.
+// It returns 0 if the key does not exist, has already expired, or has no
+// expiration to remove (idempotent). Non-existent keys return ErrKeyNotFound.
+// Expired keys are lazily deleted and return ErrKeyExpired.
+//
+// Sprint 14: Persist performs lazy expiration using the check-then-act
+// concurrency pattern. It never modifies the stored value, only the ExpiresAt field.
+func (s *MemoryStore) Persist(key string) (int64, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+	s.mu.RUnlock()
+
+	if !ok {
+		return 0, ErrKeyNotFound
+	}
+
+	if isExpired(v) {
+		s.lazyExpire(key)
+		return 0, ErrKeyExpired
+	}
+
+	// Already persistent — no state change required
+	if v.ExpiresAt.IsZero() {
+		return 0, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Re-verify the key exists and hasn't expired since releasing the read lock
+	current, ok := s.data[key]
+	if !ok {
+		return 0, ErrKeyNotFound
+	}
+	if isExpired(current) {
+		s.deleteExpiredLocked(key)
+		return 0, ErrKeyExpired
+	}
+
+	// Already persistent under write lock — idempotent
+	if current.ExpiresAt.IsZero() {
+		return 0, nil
+	}
+
+	current.ExpiresAt = time.Time{}
+	s.data[key] = current
+
+	return 1, nil
+}
