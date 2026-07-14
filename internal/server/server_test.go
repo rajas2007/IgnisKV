@@ -548,3 +548,74 @@ func TestIntegrationExpireAt(t *testing.T) {
 	expireAtPastCmd := "*3\r\n$8\r\nEXPIREAT\r\n$3\r\nkey\r\n$" + pastLenStr + "\r\n" + pastTimestampStr + "\r\n"
 	sendAndVerify(expireAtPastCmd, "-ERR invalid timestamp\r\n")
 }
+
+func TestIntegrationPExpire(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	dispatcher := commands.NewDispatcher(s)
+	srv := server.New(dispatcher)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to find free port: %v", err)
+	}
+	address := l.Addr().String()
+	l.Close()
+
+	go func() {
+		_ = srv.Start(address)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 1024)
+	sendAndVerify := func(cmd string, expected string) string {
+		if _, err := conn.Write([]byte(cmd)); err != nil {
+			t.Fatalf("Write error: %v", err)
+		}
+		n, err := conn.Read(buf)
+		if err != nil {
+			t.Fatalf("Read error: %v", err)
+		}
+		response := string(buf[:n])
+		if expected != "" && response != expected {
+			t.Fatalf("Expected %q, got %q", expected, response)
+		}
+		return response
+	}
+
+	// 1. SET key value
+	sendAndVerify("*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n", "+OK\r\n")
+
+	// 2. PEXPIRE key 1500
+	sendAndVerify("*3\r\n$7\r\nPEXPIRE\r\n$3\r\nkey\r\n$4\r\n1500\r\n", ":1\r\n")
+
+	// 3. TTL key → expect 1 or 2 seconds
+	response := sendAndVerify("*2\r\n$3\r\nTTL\r\n$3\r\nkey\r\n", "")
+	ttlStr := response[1 : len(response)-2]
+	ttl, err := strconv.Atoi(ttlStr)
+	if err != nil {
+		t.Fatalf("Expected integer TTL, got %q", ttlStr)
+	}
+	if ttl < 0 || ttl > 2 {
+		t.Fatalf("Expected TTL 0-2, got %d", ttl)
+	}
+
+	// 4. GET key → value still exists
+	response = sendAndVerify("*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n", "")
+	if response != "$5\r\nvalue\r\n" {
+		t.Fatalf("Expected value after PEXPIRE, got %q", response)
+	}
+
+	// 5. PEXPIRE missing_key 1500 → :0
+	sendAndVerify("*3\r\n$7\r\nPEXPIRE\r\n$11\r\nmissing_key\r\n$4\r\n1500\r\n", ":0\r\n")
+
+	// 6. PEXPIRE key 0 → -ERR invalid duration
+	sendAndVerify("*3\r\n$7\r\nPEXPIRE\r\n$3\r\nkey\r\n$1\r\n0\r\n", "-ERR invalid duration\r\n")
+}

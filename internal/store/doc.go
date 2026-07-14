@@ -42,6 +42,11 @@
 //   - Absolute expiration metadata updates.
 //   - Unix timestamp expiration handling.
 //   - Shared expiration timestamp management.
+//   - Millisecond expiration management.
+//   - PEXPIRE command support.
+//   - Relative millisecond expiration updates.
+//   - High-precision expiration scheduling.
+//   - Millisecond duration handling.
 //
 // Persistence and expiration are both considered native features of the storage
 // layer rather than separate subsystems. All interactions with the database
@@ -62,12 +67,13 @@
 //
 // # Design Philosophy
 //
-// The Store package owns every form of expiration:
+// The Store package owns every supported expiration operation:
 //   - SET EX
 //   - TTL
 //   - EXPIRE
 //   - PERSIST
 //   - EXPIREAT
+//   - PEXPIRE
 //   - Lazy expiration
 //   - Active expiration
 //
@@ -79,9 +85,10 @@
 // data is removed, *how* TTL is calculated, *how* expiration changes, and *how*
 // expiration is cleared (mechanism).
 //
-// Handlers may convert client input into Go types (for example Unix timestamp → time.Time),
-// but the Store remains the sole owner of expiration semantics and timestamp storage.
-// Handlers never manipulate timestamps.
+// Handlers may convert client input into Go types. For example, Unix timestamp
+// → time.Time, and for PEXPIRE this means converting milliseconds into
+// time.Duration. The Store remains the sole owner of expiration semantics and
+// ExpiresAt. Handlers never manipulate timestamps.
 //
 // Neither the Server nor the Dispatcher knows anything about expiration
 // mechanics. Expiration remains an implementation detail of the Store. This
@@ -105,7 +112,7 @@
 //	   ↙        ↓          ↘
 //	Memory  Persistence  Expiration
 //	                        ↓
-//	        SET / GET / TTL / EXPIRE / PERSIST / EXPIREAT
+//	        SET / GET / TTL / EXPIRE / PERSIST / EXPIREAT / PEXPIRE
 //	                        ↓
 //	               Background Cleanup
 //
@@ -114,16 +121,19 @@
 // application architecture. No higher-level package is aware of expiration
 // mechanics, performs expiration calculations, or manipulates timestamps.
 //
-// TTL, EXPIRE, PERSIST, EXPIREAT, GET, and background cleanup all reuse:
+// TTL, GET, background cleanup, PERSIST, EXPIRE, EXPIREAT and PEXPIRE all reuse:
 //   - ExpiresAt
 //   - isExpired()
 //   - lazyExpire()
 //
-// ExpiresAt remains the single storage location for expiration metadata.
-// EXPIRE computes a timestamp. EXPIREAT receives a timestamp. Both ultimately
-// update the same ExpiresAt field. No duplicate expiration implementation exists.
+// No additional expiration metadata exists. ExpiresAt remains the single
+// storage location for expiration metadata.
 //
-// # Current Scope (Sprint 15)
+// EXPIRE and PEXPIRE both compute relative expiration. EXPIREAT assigns an absolute
+// expiration. All three ultimately update the same ExpiresAt field. No duplicate
+// expiration implementation exists.
+//
+// # Current Scope (Sprint 16)
 //
 // The Store currently supports:
 //   - Thread-safe in-memory storage.
@@ -159,9 +169,14 @@
 //   - Unix timestamp expiration.
 //   - Shared expiration metadata updates.
 //   - Absolute expiration persistence.
+//   - PEXPIRE command.
+//   - Millisecond relative expiration.
+//   - High-precision expiration scheduling.
+//   - time.Duration based expiration updates.
 //
-// Expiration now supports creation, observation, modification, removal,
-// absolute assignment, and enforcement through one shared implementation.
+// Expiration now supports observation, creation, modification, removal,
+// absolute assignment, millisecond assignment, and automatic enforcement
+// through one shared implementation.
 //
 // # Current Limitations
 //
@@ -174,11 +189,10 @@
 // operations pause briefly during a cleanup cycle. Future milestones may
 // introduce sampling, sharding, or finer-grained locking to reduce contention.
 //
-// TTL reports whole seconds only. Millisecond precision is intentionally deferred.
-// TTL observes expiration but never modifies it.
+// TTL still reports whole seconds.
+// Millisecond expiration scheduling is supported internally.
+// TTL responses intentionally remain whole-second precision.
 //
-// Unix timestamps use second precision.
-// Millisecond precision remains future work.
 // Absolute timestamps must be in the future.
 //
 // # Background Cleanup
@@ -240,11 +254,19 @@
 //   - background cleanup
 //   - integer RESP replies
 //
+// PEXPIRE reuses:
+//   - ExpiresAt
+//   - isExpired()
+//   - lazyExpire()
+//   - Save()
+//   - background cleanup
+//   - time.Duration
+//
 // The Store remains the single authoritative owner of expiration metadata.
 //
 // Engineering Rule:
 //
-// Any command that reads or modifies a key must verify expiration before
+// Every command that reads or modifies a key must verify expiration before
 // operating on it. If the key has already expired, it is lazily removed and
 // treated as absent.
 //
@@ -254,6 +276,7 @@
 //   - EXPIRE
 //   - PERSIST
 //   - EXPIREAT
+//   - PEXPIRE
 //
 // Persistence Rule:
 //
@@ -266,10 +289,14 @@
 //   - EXPIRE
 //   - PERSIST
 //   - EXPIREAT
+//   - PEXPIRE
 //
-// EXPIREAT introduces only a new client input format. Internally the expiration
-// subsystem remains unchanged because all expiration metadata continues to be
-// stored exclusively in ExpiresAt.
+// EXPIREAT and PEXPIRE introduce only a new client input format. Internally the
+// expiration subsystem remains unchanged because all expiration metadata
+// continues to be stored exclusively in ExpiresAt.
+//
+// EXPIRE and PEXPIRE share the same Store implementation pattern and differ only
+// in the precision of the duration supplied by the handler.
 //
 // Future write commands are expected to follow the same persistence rule.
 //
@@ -322,7 +349,8 @@
 // Future milestones may extend the Store with:
 //
 // Expiration:
-//   - Millisecond precision expiration (PEXPIRE, PEXPIREAT, PTTL).
+//   - PEXPIREAT.
+//   - PTTL.
 //   - Advanced timeline observation (EXPIRETIME, PEXPIRETIME).
 //   - Configurable cleanup interval.
 //   - Expiration statistics.

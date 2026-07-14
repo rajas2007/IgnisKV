@@ -13,6 +13,7 @@ DEL <key>               Delete a key
 TTL <key>               Get remaining lifetime in seconds
 EXPIRE <key> <seconds>  Set or update expiration
 EXPIREAT <key> <ts>     Set absolute expiration timestamp
+PEXPIRE <key> <milliseconds> Set expiration in ms
 PERSIST <key>           Remove expiration
 SAVE                    Manual snapshot to disk
 HELP                    Show available commands
