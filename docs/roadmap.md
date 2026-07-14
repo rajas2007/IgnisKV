@@ -78,11 +78,20 @@ This document outlines the milestones, planned capabilities, and completion crit
 * **Goal**: Add time-to-live policies to allow transient keys to expire and release memory resources.
 * **Features**:
   * Option to assign expiration durations during key creation (e.g., via `SET` parameters).
+  * Relative whole-second expiration (`EXPIRE`) and millisecond expiration (`PEXPIRE`).
+  * Absolute timestamp expiration (`EXPIREAT`).
+  * Option to remove expiration entirely (`PERSIST`).
   * Passive key eviction (keys are verified for expiration on access).
   * Active key eviction (background routine scanning the database and evicting expired keys).
+  * High-precision expiration scheduling (millisecond relative expiration support).
+  * Automatic persistence after successful state modification (e.g., `PEXPIRE`).
 * **Deliverables**:
   * Extensible timestamp checks inside `Value`.
+  * Reuse of the existing expiration subsystem (`ExpiresAt`, `isExpired()`, `lazyExpire()`).
   * Background eviction thread loop.
+* **Sprint Tracking**:
+  * Sprint 15: `EXPIREAT` (Completed)
+  * Sprint 16: `PEXPIRE` (Completed)
 * **Completion Criteria**:
   * Expired keys become inaccessible to `GET` commands immediately upon expiration.
   * Expired keys are deleted from memory in the background, freeing up allocated resources.

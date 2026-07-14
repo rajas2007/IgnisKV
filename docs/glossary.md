@@ -32,7 +32,10 @@ A simple, binary-safe serialization protocol designed for Redis. It supports dat
 A persistence technique where every write transaction is logged sequentially to a file on disk. This log file is replayed at startup to reconstruct the database's in-memory state.
 
 ### TTL (Time-To-Live)
-A mechanism that limits the lifespan of a key-value mapping. The key is automatically marked as expired and scheduled for eviction once its duration is exceeded.
+A mechanism that limits the lifespan of a key-value mapping. The key is automatically marked as expired and scheduled for eviction once its duration is exceeded. IgnisKV supports both whole-second and high-precision millisecond expiration scheduling internally.
+
+### PEXPIRE
+A command introducing high-precision millisecond expiration scheduling, sharing the same state and persistence lifecycle as standard `EXPIRE`.
 
 ### Pub/Sub (Publish/Subscribe)
 A messaging model where senders (publishers) do not programmatically address messages to specific receivers (subscribers). Instead, publishers release messages to specific channels, which are automatically distributed to all active subscribers.

@@ -46,6 +46,14 @@ Terminates the interactive session cleanly.
 * **Behavior**: Flushes state if necessary, exits the main execution loop, and closes the process with an exit status code of `0`.
 * **Output Example**: `Bye!` (followed by terminal exit)
 
+### 2.6 Expiration Commands (Sprint 16 Complete)
+Controls the lifecycle of keys via background active eviction and lazy eviction. Handlers manage policy (such as converting milliseconds to `time.Duration`), while the core engine strictly reuses its existing expiration subsystem (`ExpiresAt`, `isExpired()`, `lazyExpire()`). Modifying a key's expiration state correctly triggers automatic persistence.
+* **TTL <key>**: Returns remaining lifetime in whole seconds.
+* **EXPIRE <key> <seconds>**: Sets a relative expiration duration.
+* **PEXPIRE <key> <milliseconds>**: Sets a relative, high-precision expiration schedule using milliseconds.
+* **EXPIREAT <key> <timestamp>**: Sets an absolute UNIX timestamp expiration.
+* **PERSIST <key>**: Removes expiration metadata entirely, converting a volatile key back to persistent.
+
 ---
 
 ## 3. Supported Data Types
@@ -89,8 +97,7 @@ The system is organized into a clean, unidirectional processing pipeline:
 
 * **Single-Process**: Must be run in the foreground of the current shell.
 * **No Persistence**: Restarting the process resets the database state to empty.
-* **No TCP Listener**: Cannot receive connections from external client tools (e.g., `redis-cli`).
-* **No TTL**: Keys remain in memory indefinitely until deleted via `DEL` or the process terminates.
+* **No TCP Listener**: Cannot receive connections from external client tools (e.g., `redis-cli`) in Version 0.1 (added in later milestones).
 
 ---
 
@@ -99,8 +106,7 @@ The system is organized into a clean, unidirectional processing pipeline:
 The following items are explicitly excluded from Version 0.1:
 * TCP socket listening, socket connections, or multiplexing.
 * Redis Serialization Protocol (RESP) format parsing and formatting.
-* Persistence journaling (AOF) or snapshots.
-* Key eviction algorithms or TTL metadata.
+* Persistence journaling (AOF) or snapshots in Version 0.1.
 * Multi-key complex transactions.
 
 ---
