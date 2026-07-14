@@ -12,6 +12,7 @@ GET <key>               Retrieve a value
 DEL <key>               Delete a key
 TTL <key>               Get remaining lifetime in seconds
 EXPIRE <key> <seconds>  Set or update expiration
+EXPIREAT <key> <ts>     Set absolute expiration timestamp
 PERSIST <key>           Remove expiration
 SAVE                    Manual snapshot to disk
 HELP                    Show available commands

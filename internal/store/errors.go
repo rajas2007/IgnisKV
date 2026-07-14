@@ -14,3 +14,7 @@ var ErrKeyExpired = errors.New("key expired")
 // ErrInvalidDuration is returned when an expiration command is provided with
 // a zero or negative duration.
 var ErrInvalidDuration = errors.New("invalid duration")
+
+// ErrInvalidTimestamp is returned when an absolute expiration command is provided with
+// a timestamp that is not in the future.
+var ErrInvalidTimestamp = errors.New("invalid timestamp")

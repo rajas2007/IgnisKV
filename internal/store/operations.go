@@ -225,3 +225,47 @@ func (s *MemoryStore) Persist(key string) (int64, error) {
 
 	return 1, nil
 }
+
+// ExpireAt updates the expiration time of an existing key to an absolute timestamp.
+// It returns 1 if the expiration was successfully set. Otherwise returns 0 together
+// with an appropriate Store error. Timestamps that are not in the future are rejected
+// with ErrInvalidTimestamp.
+//
+// Sprint 15: ExpireAt performs lazy expiration using the check-then-act
+// concurrency pattern. It never modifies the stored value, only the ExpiresAt field.
+func (s *MemoryStore) ExpireAt(key string, t time.Time) (int64, error) {
+	if !t.After(time.Now()) {
+		return 0, ErrInvalidTimestamp
+	}
+
+	s.mu.RLock()
+	v, ok := s.data[key]
+	s.mu.RUnlock()
+
+	if !ok {
+		return 0, ErrKeyNotFound
+	}
+
+	if isExpired(v) {
+		s.lazyExpire(key)
+		return 0, ErrKeyExpired
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Re-verify the key exists and hasn't expired since releasing the read lock
+	current, ok := s.data[key]
+	if !ok {
+		return 0, ErrKeyNotFound
+	}
+	if isExpired(current) {
+		s.deleteExpiredLocked(key)
+		return 0, ErrKeyExpired
+	}
+
+	current.ExpiresAt = t
+	s.data[key] = current
+
+	return 1, nil
+}

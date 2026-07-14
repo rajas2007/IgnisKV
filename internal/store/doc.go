@@ -37,6 +37,11 @@
 //   - Converting expiring keys back into persistent keys.
 //   - Expiration metadata lifecycle management.
 //   - Shared expiration modification infrastructure.
+//   - Absolute expiration management.
+//   - EXPIREAT command support.
+//   - Absolute expiration metadata updates.
+//   - Unix timestamp expiration handling.
+//   - Shared expiration timestamp management.
 //
 // Persistence and expiration are both considered native features of the storage
 // layer rather than separate subsystems. All interactions with the database
@@ -57,22 +62,26 @@
 //
 // # Design Philosophy
 //
-// The Store package owns the complete lifecycle of expiration:
-//   - Creating expiration (SET EX).
-//   - Observing expiration (TTL).
-//   - Modifying expiration (EXPIRE).
-//   - Removing expiration (PERSIST).
-//   - Enforcing expiration (GET + background cleanup).
+// The Store package owns every form of expiration:
+//   - SET EX
+//   - TTL
+//   - EXPIRE
+//   - PERSIST
+//   - EXPIREAT
+//   - Lazy expiration
+//   - Active expiration
 //
 // Higher-level packages decide *when* commands execute, *when* to ask for TTL
 // information, *when* expiration should change, and *when* expiration should be
-// removed (command policy).
+// removed (command policy). Handlers continue deciding WHEN commands execute.
+//
 // The Store determines *how* data is stored, *how* data expires, *how* expired
 // data is removed, *how* TTL is calculated, *how* expiration changes, and *how*
 // expiration is cleared (mechanism).
 //
-// Handlers never manipulate timestamps. The Store remains the single owner
-// of expiration semantics.
+// Handlers may convert client input into Go types (for example Unix timestamp → time.Time),
+// but the Store remains the sole owner of expiration semantics and timestamp storage.
+// Handlers never manipulate timestamps.
 //
 // Neither the Server nor the Dispatcher knows anything about expiration
 // mechanics. Expiration remains an implementation detail of the Store. This
@@ -96,7 +105,7 @@
 //	   ↙        ↓          ↘
 //	Memory  Persistence  Expiration
 //	                        ↓
-//	        GET / TTL / EXPIRE / PERSIST
+//	        SET / GET / TTL / EXPIRE / PERSIST / EXPIREAT
 //	                        ↓
 //	               Background Cleanup
 //
@@ -105,14 +114,16 @@
 // application architecture. No higher-level package is aware of expiration
 // mechanics, performs expiration calculations, or manipulates timestamps.
 //
-// TTL, EXPIRE, PERSIST, lazy expiration, and active expiration all share:
+// TTL, EXPIRE, PERSIST, EXPIREAT, GET, and background cleanup all reuse:
 //   - ExpiresAt
 //   - isExpired()
 //   - lazyExpire()
 //
-// No duplicate expiration implementation exists.
+// ExpiresAt remains the single storage location for expiration metadata.
+// EXPIRE computes a timestamp. EXPIREAT receives a timestamp. Both ultimately
+// update the same ExpiresAt field. No duplicate expiration implementation exists.
 //
-// # Current Scope (Sprint 14)
+// # Current Scope (Sprint 15)
 //
 // The Store currently supports:
 //   - Thread-safe in-memory storage.
@@ -143,10 +154,14 @@
 //   - Persistent key restoration.
 //   - Shared expiration modification.
 //   - Complete expiration lifecycle management.
+//   - EXPIREAT command support.
+//   - Absolute expiration assignment.
+//   - Unix timestamp expiration.
+//   - Shared expiration metadata updates.
+//   - Absolute expiration persistence.
 //
-// Expiration now supports observation (TTL), modification (EXPIRE), removal
-// (PERSIST), and enforcement (GET + background cleanup) using one shared
-// implementation.
+// Expiration now supports creation, observation, modification, removal,
+// absolute assignment, and enforcement through one shared implementation.
 //
 // # Current Limitations
 //
@@ -162,9 +177,9 @@
 // TTL reports whole seconds only. Millisecond precision is intentionally deferred.
 // TTL observes expiration but never modifies it.
 //
-// Only relative expiration commands are currently supported (EXPIRE with seconds).
-// Absolute expiration commands (EXPIREAT) remain future work.
-// Millisecond precision remains deferred.
+// Unix timestamps use second precision.
+// Millisecond precision remains future work.
+// Absolute timestamps must be in the future.
 //
 // # Background Cleanup
 //
@@ -216,6 +231,15 @@
 //   - background cleanup
 //   - integer RESP replies
 //
+// EXPIREAT reuses:
+//   - time.Time
+//   - ExpiresAt
+//   - isExpired()
+//   - lazyExpire()
+//   - Save()
+//   - background cleanup
+//   - integer RESP replies
+//
 // The Store remains the single authoritative owner of expiration metadata.
 //
 // Engineering Rule:
@@ -229,6 +253,7 @@
 //   - TTL
 //   - EXPIRE
 //   - PERSIST
+//   - EXPIREAT
 //
 // Persistence Rule:
 //
@@ -240,6 +265,11 @@
 //   - DEL
 //   - EXPIRE
 //   - PERSIST
+//   - EXPIREAT
+//
+// EXPIREAT introduces only a new client input format. Internally the expiration
+// subsystem remains unchanged because all expiration metadata continues to be
+// stored exclusively in ExpiresAt.
 //
 // Future write commands are expected to follow the same persistence rule.
 //
@@ -292,8 +322,8 @@
 // Future milestones may extend the Store with:
 //
 // Expiration:
-//   - Absolute expiration commands (EXPIREAT).
 //   - Millisecond precision expiration (PEXPIRE, PEXPIREAT, PTTL).
+//   - Advanced timeline observation (EXPIRETIME, PEXPIRETIME).
 //   - Configurable cleanup interval.
 //   - Expiration statistics.
 //   - Redis-style sampling improvements.
