@@ -47,6 +47,10 @@
 //   - Relative millisecond expiration updates.
 //   - High-precision expiration scheduling.
 //   - Millisecond duration handling.
+//   - Absolute millisecond expiration management.
+//   - PEXPIREAT command support.
+//   - Unix millisecond timestamp handling.
+//   - High-precision absolute expiration assignment.
 //
 // Persistence and expiration are both considered native features of the storage
 // layer rather than separate subsystems. All interactions with the database
@@ -71,9 +75,10 @@
 //   - SET EX
 //   - TTL
 //   - EXPIRE
+//   - PEXPIRE
 //   - PERSIST
 //   - EXPIREAT
-//   - PEXPIRE
+//   - PEXPIREAT
 //   - Lazy expiration
 //   - Active expiration
 //
@@ -87,8 +92,9 @@
 //
 // Handlers may convert client input into Go types. For example, Unix timestamp
 // → time.Time, and for PEXPIRE this means converting milliseconds into
-// time.Duration. The Store remains the sole owner of expiration semantics and
-// ExpiresAt. Handlers never manipulate timestamps.
+// time.Duration. For PEXPIREAT this means converting Unix milliseconds into
+// time.Time using time.UnixMilli(). The Store remains the sole owner of
+// expiration semantics and ExpiresAt. Handlers never manipulate timestamps.
 //
 // Neither the Server nor the Dispatcher knows anything about expiration
 // mechanics. Expiration remains an implementation detail of the Store. This
@@ -112,7 +118,7 @@
 //	   ↙        ↓          ↘
 //	Memory  Persistence  Expiration
 //	                        ↓
-//	        SET / GET / TTL / EXPIRE / PERSIST / EXPIREAT / PEXPIRE
+//	        SET / GET / TTL / EXPIRE / PERSIST / EXPIREAT / PEXPIRE / PEXPIREAT
 //	                        ↓
 //	               Background Cleanup
 //
@@ -121,7 +127,7 @@
 // application architecture. No higher-level package is aware of expiration
 // mechanics, performs expiration calculations, or manipulates timestamps.
 //
-// TTL, GET, background cleanup, PERSIST, EXPIRE, EXPIREAT and PEXPIRE all reuse:
+// GET, TTL, EXPIRE, PEXPIRE, PERSIST, EXPIREAT, PEXPIREAT, and background cleanup all reuse:
 //   - ExpiresAt
 //   - isExpired()
 //   - lazyExpire()
@@ -129,11 +135,22 @@
 // No additional expiration metadata exists. ExpiresAt remains the single
 // storage location for expiration metadata.
 //
-// EXPIRE and PEXPIRE both compute relative expiration. EXPIREAT assigns an absolute
-// expiration. All three ultimately update the same ExpiresAt field. No duplicate
-// expiration implementation exists.
+// EXPIRE and PEXPIRE both compute relative expiration. EXPIREAT and PEXPIREAT
+// both assign absolute expiration. All four ultimately update the same
+// ExpiresAt field. No duplicate expiration implementation exists.
 //
-// # Current Scope (Sprint 16)
+// Completed command pairs:
+//
+//	EXPIRE    ↔ EXPIREAT
+//	(relative seconds ↔ absolute seconds)
+//
+//	PEXPIRE   ↔ PEXPIREAT
+//	(relative milliseconds ↔ absolute milliseconds)
+//
+// Each pair shares identical Store semantics.
+// Only the handler input conversion differs.
+//
+// # Current Scope (Sprint 17)
 //
 // The Store currently supports:
 //   - Thread-safe in-memory storage.
@@ -173,10 +190,16 @@
 //   - Millisecond relative expiration.
 //   - High-precision expiration scheduling.
 //   - time.Duration based expiration updates.
+//   - PEXPIREAT command.
+//   - Absolute millisecond expiration.
+//   - Unix millisecond timestamps.
+//   - High-precision absolute expiration assignment.
+//   - time.UnixMilli based expiration updates.
 //
 // Expiration now supports observation, creation, modification, removal,
-// absolute assignment, millisecond assignment, and automatic enforcement
-// through one shared implementation.
+// relative assignment, absolute assignment, second precision input,
+// millisecond precision input, and automatic enforcement through one
+// shared implementation.
 //
 // # Current Limitations
 //
@@ -190,8 +213,8 @@
 // introduce sampling, sharding, or finer-grained locking to reduce contention.
 //
 // TTL still reports whole seconds.
-// Millisecond expiration scheduling is supported internally.
-// TTL responses intentionally remain whole-second precision.
+// Millisecond expiration is fully supported internally.
+// Millisecond TTL reporting remains future work.
 //
 // Absolute timestamps must be in the future.
 //
@@ -262,6 +285,15 @@
 //   - background cleanup
 //   - time.Duration
 //
+// PEXPIREAT reuses:
+//   - ExpiresAt
+//   - isExpired()
+//   - lazyExpire()
+//   - Save()
+//   - background cleanup
+//   - time.Time
+//   - time.UnixMilli() (via handler conversion)
+//
 // The Store remains the single authoritative owner of expiration metadata.
 //
 // Engineering Rule:
@@ -274,9 +306,10 @@
 //   - GET
 //   - TTL
 //   - EXPIRE
+//   - PEXPIRE
 //   - PERSIST
 //   - EXPIREAT
-//   - PEXPIRE
+//   - PEXPIREAT
 //
 // Persistence Rule:
 //
@@ -287,16 +320,19 @@
 //   - SET
 //   - DEL
 //   - EXPIRE
+//   - PEXPIRE
 //   - PERSIST
 //   - EXPIREAT
-//   - PEXPIRE
+//   - PEXPIREAT
 //
-// EXPIREAT and PEXPIRE introduce only a new client input format. Internally the
+// PEXPIREAT introduces only a new client input format. Internally the
 // expiration subsystem remains unchanged because all expiration metadata
 // continues to be stored exclusively in ExpiresAt.
 //
-// EXPIRE and PEXPIRE share the same Store implementation pattern and differ only
-// in the precision of the duration supplied by the handler.
+//   - EXPIRE and PEXPIRE share one implementation pattern.
+//   - EXPIREAT and PEXPIREAT share one implementation pattern.
+//
+// The only difference inside each pair is the handler's input conversion.
 //
 // Future write commands are expected to follow the same persistence rule.
 //
@@ -349,7 +385,6 @@
 // Future milestones may extend the Store with:
 //
 // Expiration:
-//   - PEXPIREAT.
 //   - PTTL.
 //   - Advanced timeline observation (EXPIRETIME, PEXPIRETIME).
 //   - Configurable cleanup interval.

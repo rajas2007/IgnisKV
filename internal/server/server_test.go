@@ -619,3 +619,83 @@ func TestIntegrationPExpire(t *testing.T) {
 	// 6. PEXPIRE key 0 → -ERR invalid duration
 	sendAndVerify("*3\r\n$7\r\nPEXPIRE\r\n$3\r\nkey\r\n$1\r\n0\r\n", "-ERR invalid duration\r\n")
 }
+
+func TestIntegrationPExpireAt(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	dispatcher := commands.NewDispatcher(s)
+	srv := server.New(dispatcher)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to find free port: %v", err)
+	}
+	address := l.Addr().String()
+	l.Close()
+
+	go func() {
+		_ = srv.Start(address)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 1024)
+	sendAndVerify := func(cmd string, expected string) string {
+		if _, err := conn.Write([]byte(cmd)); err != nil {
+			t.Fatalf("Write error: %v", err)
+		}
+		n, err := conn.Read(buf)
+		if err != nil {
+			t.Fatalf("Read error: %v", err)
+		}
+		response := string(buf[:n])
+		if expected != "" && response != expected {
+			t.Fatalf("Expected %q, got %q", expected, response)
+		}
+		return response
+	}
+
+	// 1. SET key value
+	sendAndVerify("*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n", "+OK\r\n")
+
+	// 2. PEXPIREAT key (now + 5000 ms)
+	futureTime := time.Now().Add(5000 * time.Millisecond).UnixMilli()
+	timestampStr := strconv.FormatInt(futureTime, 10)
+	tsLenStr := strconv.Itoa(len(timestampStr))
+	expireAtCmd := "*3\r\n$9\r\nPEXPIREAT\r\n$3\r\nkey\r\n$" + tsLenStr + "\r\n" + timestampStr + "\r\n"
+	sendAndVerify(expireAtCmd, ":1\r\n")
+
+	// 3. TTL key → expect 3-5 seconds
+	response := sendAndVerify("*2\r\n$3\r\nTTL\r\n$3\r\nkey\r\n", "")
+	ttlStr := response[1 : len(response)-2]
+	ttl, err := strconv.Atoi(ttlStr)
+	if err != nil {
+		t.Fatalf("Expected integer TTL, got %q", ttlStr)
+	}
+	if ttl < 2 || ttl > 5 {
+		t.Fatalf("Expected TTL 2-5, got %d", ttl)
+	}
+
+	// 4. GET key → value still exists
+	response = sendAndVerify("*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n", "")
+	if response != "$5\r\nvalue\r\n" {
+		t.Fatalf("Expected value after PEXPIREAT, got %q", response)
+	}
+
+	// 5. PEXPIREAT missing_key (same future timestamp) → :0
+	expireAtMissingCmd := "*3\r\n$9\r\nPEXPIREAT\r\n$11\r\nmissing_key\r\n$" + tsLenStr + "\r\n" + timestampStr + "\r\n"
+	sendAndVerify(expireAtMissingCmd, ":0\r\n")
+
+	// 6. PEXPIREAT key past_timestamp → -ERR invalid timestamp
+	pastTime := time.Now().Add(-1000 * time.Millisecond).UnixMilli()
+	pastTimestampStr := strconv.FormatInt(pastTime, 10)
+	pastLenStr := strconv.Itoa(len(pastTimestampStr))
+	expireAtPastCmd := "*3\r\n$9\r\nPEXPIREAT\r\n$3\r\nkey\r\n$" + pastLenStr + "\r\n" + pastTimestampStr + "\r\n"
+	sendAndVerify(expireAtPastCmd, "-ERR invalid timestamp\r\n")
+}
