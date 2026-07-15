@@ -391,3 +391,31 @@ func (s *MemoryStore) PExpireAt(key string, t time.Time) (int64, error) {
 
 	return 1, nil
 }
+
+// ExpireTime returns the absolute expiration timestamp of the given key in Unix seconds.
+// It returns -1 if the key exists but has no associated expiration.
+// It returns ErrKeyNotFound if the key does not exist.
+//
+// Sprint 19: ExpireTime performs lazy expiration using the same check-then-act
+// concurrency pattern established by TTL(). If the key is found to be
+// expired, it is deleted and ErrKeyExpired is returned.
+func (s *MemoryStore) ExpireTime(key string) (int64, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+	s.mu.RUnlock()
+
+	if !ok {
+		return 0, ErrKeyNotFound
+	}
+
+	if isExpired(v) {
+		s.lazyExpire(key)
+		return 0, ErrKeyExpired
+	}
+
+	if v.ExpiresAt.IsZero() {
+		return -1, nil
+	}
+
+	return v.ExpiresAt.Unix(), nil
+}

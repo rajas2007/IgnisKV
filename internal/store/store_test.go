@@ -688,3 +688,62 @@ func TestExpirePersistsAcrossSaveLoad(t *testing.T) {
 		t.Fatalf("expected TTL between 4 and 5 seconds, got %d", ttl)
 	}
 }
+
+func TestExpireTime(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	ts, err := s.ExpireTime("missing")
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("expected ErrKeyNotFound for missing key, got %v", err)
+	}
+	if ts != 0 {
+		t.Fatalf("expected 0 for missing key, got %d", ts)
+	}
+
+	// 2. Persistent key
+	s.Set("persistent", types.Value{Type: types.StringType, Data: "val"})
+	ts, err = s.ExpireTime("persistent")
+	if err != nil {
+		t.Fatalf("expected nil error for persistent key, got %v", err)
+	}
+	if ts != -1 {
+		t.Fatalf("expected -1 for persistent key, got %d", ts)
+	}
+
+	// 3. Expiring key
+	future := time.Now().Add(5 * time.Second)
+	s.Set("expiring", types.Value{
+		Type:      types.StringType,
+		Data:      "val",
+		ExpiresAt: future,
+	})
+
+	ts, err = s.ExpireTime("expiring")
+	if err != nil {
+		t.Fatalf("expected nil error for expiring key, got %v", err)
+	}
+	if ts != future.Unix() {
+		t.Fatalf("expected %d, got %d", future.Unix(), ts)
+	}
+
+	// 4. Expired key
+	past := time.Now().Add(-5 * time.Second)
+	s.Set("expired", types.Value{
+		Type:      types.StringType,
+		Data:      "val",
+		ExpiresAt: past,
+	})
+
+	ts, err = s.ExpireTime("expired")
+	if !errors.Is(err, ErrKeyExpired) {
+		t.Fatalf("expected ErrKeyExpired for expired key, got %v", err)
+	}
+	if ts != 0 {
+		t.Fatalf("expected 0 for expired key, got %d", ts)
+	}
+	// Verify lazy deletion occurred
+	if s.Exists("expired") {
+		t.Fatalf("expected expired key to be lazily deleted")
+	}
+}

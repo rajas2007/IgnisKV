@@ -767,3 +767,71 @@ func TestIntegrationPTTL(t *testing.T) {
 	// 5. PTTL missing_key → :-2
 	sendAndVerify("*2\r\n$4\r\nPTTL\r\n$11\r\nmissing_key\r\n", ":-2\r\n")
 }
+
+func TestIntegrationExpireTime(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	dispatcher := commands.NewDispatcher(s)
+	srv := server.New(dispatcher)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to find free port: %v", err)
+	}
+	address := l.Addr().String()
+	l.Close()
+
+	go func() {
+		_ = srv.Start(address)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 1024)
+	sendAndVerify := func(cmd string, expected string) string {
+		if _, err := conn.Write([]byte(cmd)); err != nil {
+			t.Fatalf("Write error: %v", err)
+		}
+		n, err := conn.Read(buf)
+		if err != nil {
+			t.Fatalf("Read error: %v", err)
+		}
+		response := string(buf[:n])
+		if expected != "" && response != expected {
+			t.Fatalf("Expected %q, got %q", expected, response)
+		}
+		return response
+	}
+
+	// 1. SET key value
+	sendAndVerify("*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n", "+OK\r\n")
+
+	// 2. EXPIRE key 5
+	sendAndVerify("*3\r\n$6\r\nEXPIRE\r\n$3\r\nkey\r\n$1\r\n5\r\n", ":1\r\n")
+
+	// 3. EXPIRETIME key
+	response := sendAndVerify("*2\r\n$10\r\nEXPIRETIME\r\n$3\r\nkey\r\n", "")
+	tsStr := response[1 : len(response)-2]
+	ts, err := strconv.ParseInt(tsStr, 10, 64)
+	if err != nil {
+		t.Fatalf("Expected integer EXPIRETIME, got %q", tsStr)
+	}
+
+	expectedTs := time.Now().Add(5 * time.Second).Unix()
+	if ts < expectedTs-1 || ts > expectedTs+1 {
+		t.Fatalf("Expected EXPIRETIME approx %d, got %d", expectedTs, ts)
+	}
+
+	// 4. EXPIRETIME missing_key → :-2
+	sendAndVerify("*2\r\n$10\r\nEXPIRETIME\r\n$11\r\nmissing_key\r\n", ":-2\r\n")
+
+	// 5. EXPIRETIME persistent_key
+	sendAndVerify("*3\r\n$3\r\nSET\r\n$14\r\npersistent_key\r\n$5\r\nvalue\r\n", "+OK\r\n")
+	sendAndVerify("*2\r\n$10\r\nEXPIRETIME\r\n$14\r\npersistent_key\r\n", ":-1\r\n")
+}

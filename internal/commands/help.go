@@ -12,6 +12,7 @@ GET <key>               Retrieve a value
 DEL <key>               Delete a key
 TTL <key>               Get remaining lifetime in seconds
 PTTL <key>              Get remaining lifetime in milliseconds
+EXPIRETIME <key>        Get absolute expiration timestamp in seconds
 EXPIRE <key> <seconds>  Set or update expiration
 EXPIREAT <key> <ts>     Set absolute expiration timestamp
 PEXPIRE <key> <milliseconds> Set expiration in ms

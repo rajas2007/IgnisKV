@@ -55,6 +55,10 @@
 //   - PTTL command support.
 //   - High-precision expiration queries.
 //   - Millisecond lifetime calculation.
+//   - Absolute expiration observation.
+//   - EXPIRETIME command support.
+//   - Unix timestamp expiration queries.
+//   - Second-precision expiration timestamp retrieval.
 //
 // Persistence and expiration are both considered native features of the storage
 // layer rather than separate subsystems. All interactions with the database
@@ -79,6 +83,7 @@
 //   - SET EX
 //   - TTL
 //   - PTTL
+//   - EXPIRETIME
 //   - EXPIRE
 //   - PEXPIRE
 //   - PERSIST
@@ -90,11 +95,12 @@
 // The Store also owns every supported expiration observation operation:
 //   - TTL
 //   - PTTL
+//   - EXPIRETIME
 //
 // Higher-level packages decide *when* commands execute, *when* to ask for TTL
 // information, *when* expiration should change, and *when* expiration should be
 // removed (command policy). Handlers continue deciding WHEN commands execute.
-// Handlers perform only argument validation.
+// Handlers perform only argument validation and response translation.
 //
 // The Store determines *how* data is stored, *how* data expires, *how* expired
 // data is removed, *how* TTL is calculated, *how* expiration changes, and *how*
@@ -128,17 +134,17 @@
 //	   ↙        ↓          ↘
 //	Memory  Persistence  Expiration
 //	                        ↓
-//	        SET / GET / TTL / PTTL / EXPIRE / PERSIST / EXPIREAT / PEXPIRE / PEXPIREAT
+//	        SET / GET / TTL / PTTL / EXPIRETIME / EXPIRE / PERSIST / EXPIREAT / PEXPIRE / PEXPIREAT
 //	                        ↓
 //	               Background Cleanup
 //
-// Background cleanup, TTL reporting, PTTL reporting, EXPIRE modifications, and
-// PERSIST removals are implemented entirely inside the Store and do not alter
-// the overall application architecture. No higher-level package is aware of
-// expiration mechanics, performs expiration calculations, or manipulates
-// timestamps.
+// Background cleanup, TTL reporting, PTTL reporting, EXPIRETIME reporting, EXPIRE
+// modifications, and PERSIST removals are implemented entirely inside the Store
+// and do not alter the overall application architecture. No higher-level package
+// is aware of expiration mechanics, performs expiration calculations, or
+// manipulates timestamps.
 //
-// GET, TTL, PTTL, EXPIRE, PEXPIRE, PERSIST, EXPIREAT, PEXPIREAT, and background cleanup all reuse:
+// GET, TTL, PTTL, EXPIRETIME, EXPIRE, PEXPIRE, PERSIST, EXPIREAT, PEXPIREAT, and background cleanup all reuse:
 //   - ExpiresAt
 //   - isExpired()
 //   - lazyExpire()
@@ -146,18 +152,22 @@
 // No additional expiration metadata exists. ExpiresAt remains the single
 // storage location for expiration metadata.
 //
-// TTL and PTTL are observation commands. They never modify state. They both
-// reuse ExpiresAt, isExpired(), and lazyExpire(). TTL reports whole seconds.
-// PTTL reports whole milliseconds. Both compute remaining lifetime from the
-// same ExpiresAt field.
+// TTL, PTTL, and EXPIRETIME are observation commands. They never modify state.
+// All three commands reuse ExpiresAt, isExpired(), and lazyExpire().
+//
+// TTL and PTTL compute the remaining lifetime from the ExpiresAt field. TTL
+// reports whole seconds. PTTL reports whole milliseconds.
+// EXPIRETIME returns the stored absolute expiration timestamp in Unix seconds.
 //
 // Observation comparison:
 //
-//	Command       Returns              Unit
-//	TTL           remaining/-1/-2      seconds
-//	PTTL          remaining/-1/-2      milliseconds
+//	Command        Returns              Unit
+//	TTL            remaining/-1/-2      seconds
+//	PTTL           remaining/-1/-2      milliseconds
+//	EXPIRETIME     absolute/-1/-2       Unix seconds
 //
-// Everything except the returned unit is identical.
+// TTL/PTTL derive remaining lifetime. EXPIRETIME exposes the stored expiration
+// timestamp. Everything except the returned unit is identical.
 //
 // EXPIRE and PEXPIRE both compute relative expiration. EXPIREAT and PEXPIREAT
 // both assign absolute expiration. All four ultimately update the same
@@ -174,7 +184,7 @@
 // Each pair shares identical Store semantics.
 // Only the handler input conversion differs.
 //
-// # Current Scope (Sprint 18)
+// # Current Scope (Sprint 19)
 //
 // The Store currently supports:
 //   - Thread-safe in-memory storage.
@@ -223,9 +233,12 @@
 //   - Millisecond TTL observation.
 //   - High-precision remaining lifetime queries.
 //   - Millisecond lifetime calculation.
+//   - EXPIRETIME command.
+//   - Absolute expiration timestamp queries.
+//   - Unix second timestamp observation.
 //
-// Expiration observation now supports both seconds and milliseconds through
-// one shared expiration implementation.
+// Expiration observation now supports remaining lifetime, absolute expiration time,
+// seconds, and milliseconds through one shared expiration implementation.
 //
 // Expiration now supports observation, creation, modification, removal,
 // relative assignment, absolute assignment, second precision input,
@@ -245,7 +258,10 @@
 //
 // TTL continues to report whole seconds.
 // PTTL reports whole milliseconds.
-// EXPIRETIME and PEXPIRETIME remain future work.
+//
+// Absolute expiration timestamps can be assigned in both seconds and milliseconds.
+// Absolute expiration observation is currently available only in Unix seconds.
+// PEXPIRETIME remains future work.
 //
 // Absolute timestamps must be in the future.
 //
@@ -331,8 +347,15 @@
 //   - lazyExpire()
 //   - time.Time
 //
-// PTTL introduces only a different observation unit. Internally both TTL and
-// PTTL compute the remaining lifetime from the same ExpiresAt field.
+// EXPIRETIME reuses:
+//   - ExpiresAt
+//   - isExpired()
+//   - lazyExpire()
+//   - time.Time
+//
+// TTL, PTTL, and EXPIRETIME introduce no new expiration infrastructure.
+// All three reuse the same ExpiresAt field, isExpired(), and lazyExpire().
+// They differ only in what they report and the unit returned to the client.
 //
 // Millisecond clamping:
 //
@@ -353,6 +376,7 @@
 //   - GET
 //   - TTL
 //   - PTTL
+//   - EXPIRETIME
 //   - EXPIRE
 //   - PEXPIRE
 //   - PERSIST
@@ -434,7 +458,7 @@
 // Future milestones may extend the Store with:
 //
 // Expiration:
-//   - Advanced timeline observation (EXPIRETIME, PEXPIRETIME).
+//   - Advanced timeline observation (PEXPIRETIME).
 //   - Configurable cleanup interval.
 //   - Expiration statistics.
 //   - Redis-style sampling improvements.
