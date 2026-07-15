@@ -11,6 +11,7 @@ SET <key> <value> EX <s> Store a value with expiration
 GET <key>               Retrieve a value
 DEL <key>               Delete a key
 TTL <key>               Get remaining lifetime in seconds
+PTTL <key>              Get remaining lifetime in milliseconds
 EXPIRE <key> <seconds>  Set or update expiration
 EXPIREAT <key> <ts>     Set absolute expiration timestamp
 PEXPIRE <key> <milliseconds> Set expiration in ms

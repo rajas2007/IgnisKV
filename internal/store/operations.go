@@ -108,6 +108,40 @@ func (s *MemoryStore) TTL(key string) (int64, error) {
 	return seconds, nil
 }
 
+// PTTL returns the remaining lifetime of the given key in whole milliseconds.
+// It returns -1 if the key exists but has no associated expiration.
+// It returns ErrKeyNotFound if the key does not exist.
+//
+// Sprint 18: PTTL performs lazy expiration using the same check-then-act
+// concurrency pattern established by TTL(). If the key is found to be
+// expired, it is deleted and ErrKeyExpired is returned.
+func (s *MemoryStore) PTTL(key string) (int64, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+	s.mu.RUnlock()
+
+	if !ok {
+		return 0, ErrKeyNotFound
+	}
+
+	if isExpired(v) {
+		s.lazyExpire(key)
+		return 0, ErrKeyExpired
+	}
+
+	if v.ExpiresAt.IsZero() {
+		return -1, nil
+	}
+
+	remaining := v.ExpiresAt.Sub(time.Now())
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	milliseconds := remaining.Milliseconds()
+	return milliseconds, nil
+}
+
 // lazyExpire performs the check-then-act concurrency pattern to safely delete
 // a key that has passed its expiration deadline. It acquires a write lock and
 // re-verifies the key's state to prevent deleting a value that was updated by

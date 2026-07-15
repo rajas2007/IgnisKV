@@ -699,3 +699,71 @@ func TestIntegrationPExpireAt(t *testing.T) {
 	expireAtPastCmd := "*3\r\n$9\r\nPEXPIREAT\r\n$3\r\nkey\r\n$" + pastLenStr + "\r\n" + pastTimestampStr + "\r\n"
 	sendAndVerify(expireAtPastCmd, "-ERR invalid timestamp\r\n")
 }
+
+func TestIntegrationPTTL(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	dispatcher := commands.NewDispatcher(s)
+	srv := server.New(dispatcher)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to find free port: %v", err)
+	}
+	address := l.Addr().String()
+	l.Close()
+
+	go func() {
+		_ = srv.Start(address)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 1024)
+	sendAndVerify := func(cmd string, expected string) string {
+		if _, err := conn.Write([]byte(cmd)); err != nil {
+			t.Fatalf("Write error: %v", err)
+		}
+		n, err := conn.Read(buf)
+		if err != nil {
+			t.Fatalf("Read error: %v", err)
+		}
+		response := string(buf[:n])
+		if expected != "" && response != expected {
+			t.Fatalf("Expected %q, got %q", expected, response)
+		}
+		return response
+	}
+
+	// 1. SET key value
+	sendAndVerify("*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n", "+OK\r\n")
+
+	// 2. PEXPIRE key 3000
+	sendAndVerify("*3\r\n$7\r\nPEXPIRE\r\n$3\r\nkey\r\n$4\r\n3000\r\n", ":1\r\n")
+
+	// 3. PTTL key → expect between 1800 and 3000 milliseconds
+	response := sendAndVerify("*2\r\n$4\r\nPTTL\r\n$3\r\nkey\r\n", "")
+	pttlStr := response[1 : len(response)-2]
+	pttl, err := strconv.Atoi(pttlStr)
+	if err != nil {
+		t.Fatalf("Expected integer PTTL, got %q", pttlStr)
+	}
+	if pttl < 1800 || pttl > 3000 {
+		t.Fatalf("Expected PTTL 1800-3000, got %d", pttl)
+	}
+
+	// 4. GET key → value still exists
+	response = sendAndVerify("*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n", "")
+	if response != "$5\r\nvalue\r\n" {
+		t.Fatalf("Expected value after PTTL, got %q", response)
+	}
+
+	// 5. PTTL missing_key → :-2
+	sendAndVerify("*2\r\n$4\r\nPTTL\r\n$11\r\nmissing_key\r\n", ":-2\r\n")
+}

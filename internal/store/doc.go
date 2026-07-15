@@ -51,6 +51,10 @@
 //   - PEXPIREAT command support.
 //   - Unix millisecond timestamp handling.
 //   - High-precision absolute expiration assignment.
+//   - Millisecond TTL observation.
+//   - PTTL command support.
+//   - High-precision expiration queries.
+//   - Millisecond lifetime calculation.
 //
 // Persistence and expiration are both considered native features of the storage
 // layer rather than separate subsystems. All interactions with the database
@@ -74,6 +78,7 @@
 // The Store package owns every supported expiration operation:
 //   - SET EX
 //   - TTL
+//   - PTTL
 //   - EXPIRE
 //   - PEXPIRE
 //   - PERSIST
@@ -82,9 +87,14 @@
 //   - Lazy expiration
 //   - Active expiration
 //
+// The Store also owns every supported expiration observation operation:
+//   - TTL
+//   - PTTL
+//
 // Higher-level packages decide *when* commands execute, *when* to ask for TTL
 // information, *when* expiration should change, and *when* expiration should be
 // removed (command policy). Handlers continue deciding WHEN commands execute.
+// Handlers perform only argument validation.
 //
 // The Store determines *how* data is stored, *how* data expires, *how* expired
 // data is removed, *how* TTL is calculated, *how* expiration changes, and *how*
@@ -118,22 +128,36 @@
 //	   ↙        ↓          ↘
 //	Memory  Persistence  Expiration
 //	                        ↓
-//	        SET / GET / TTL / EXPIRE / PERSIST / EXPIREAT / PEXPIRE / PEXPIREAT
+//	        SET / GET / TTL / PTTL / EXPIRE / PERSIST / EXPIREAT / PEXPIRE / PEXPIREAT
 //	                        ↓
 //	               Background Cleanup
 //
-// Background cleanup, TTL reporting, EXPIRE modifications, and PERSIST removals
-// are implemented entirely inside the Store and do not alter the overall
-// application architecture. No higher-level package is aware of expiration
-// mechanics, performs expiration calculations, or manipulates timestamps.
+// Background cleanup, TTL reporting, PTTL reporting, EXPIRE modifications, and
+// PERSIST removals are implemented entirely inside the Store and do not alter
+// the overall application architecture. No higher-level package is aware of
+// expiration mechanics, performs expiration calculations, or manipulates
+// timestamps.
 //
-// GET, TTL, EXPIRE, PEXPIRE, PERSIST, EXPIREAT, PEXPIREAT, and background cleanup all reuse:
+// GET, TTL, PTTL, EXPIRE, PEXPIRE, PERSIST, EXPIREAT, PEXPIREAT, and background cleanup all reuse:
 //   - ExpiresAt
 //   - isExpired()
 //   - lazyExpire()
 //
 // No additional expiration metadata exists. ExpiresAt remains the single
 // storage location for expiration metadata.
+//
+// TTL and PTTL are observation commands. They never modify state. They both
+// reuse ExpiresAt, isExpired(), and lazyExpire(). TTL reports whole seconds.
+// PTTL reports whole milliseconds. Both compute remaining lifetime from the
+// same ExpiresAt field.
+//
+// Observation comparison:
+//
+//	Command       Returns              Unit
+//	TTL           remaining/-1/-2      seconds
+//	PTTL          remaining/-1/-2      milliseconds
+//
+// Everything except the returned unit is identical.
 //
 // EXPIRE and PEXPIRE both compute relative expiration. EXPIREAT and PEXPIREAT
 // both assign absolute expiration. All four ultimately update the same
@@ -150,7 +174,7 @@
 // Each pair shares identical Store semantics.
 // Only the handler input conversion differs.
 //
-// # Current Scope (Sprint 17)
+// # Current Scope (Sprint 18)
 //
 // The Store currently supports:
 //   - Thread-safe in-memory storage.
@@ -195,6 +219,13 @@
 //   - Unix millisecond timestamps.
 //   - High-precision absolute expiration assignment.
 //   - time.UnixMilli based expiration updates.
+//   - PTTL command.
+//   - Millisecond TTL observation.
+//   - High-precision remaining lifetime queries.
+//   - Millisecond lifetime calculation.
+//
+// Expiration observation now supports both seconds and milliseconds through
+// one shared expiration implementation.
 //
 // Expiration now supports observation, creation, modification, removal,
 // relative assignment, absolute assignment, second precision input,
@@ -212,9 +243,9 @@
 // operations pause briefly during a cleanup cycle. Future milestones may
 // introduce sampling, sharding, or finer-grained locking to reduce contention.
 //
-// TTL still reports whole seconds.
-// Millisecond expiration is fully supported internally.
-// Millisecond TTL reporting remains future work.
+// TTL continues to report whole seconds.
+// PTTL reports whole milliseconds.
+// EXPIRETIME and PEXPIRETIME remain future work.
 //
 // Absolute timestamps must be in the future.
 //
@@ -248,8 +279,8 @@
 // All expiration implementations must preserve the existing concurrency
 // guarantees.
 //
-// TTL is a read-only operation. TTL never performs persistence. TTL never changes
-// expiration policy.
+// TTL and PTTL are read-only operations. Neither performs persistence. Neither
+// changes expiration policy.
 //
 // EXPIRE reuses:
 //   - isExpired()
@@ -294,17 +325,34 @@
 //   - time.Time
 //   - time.UnixMilli() (via handler conversion)
 //
+// PTTL reuses:
+//   - ExpiresAt
+//   - isExpired()
+//   - lazyExpire()
+//   - time.Time
+//
+// PTTL introduces only a different observation unit. Internally both TTL and
+// PTTL compute the remaining lifetime from the same ExpiresAt field.
+//
+// Millisecond clamping:
+//
+// Between reading ExpiresAt and computing the remaining lifetime, a key may
+// expire. If the computed millisecond lifetime is negative, clamp it to zero
+// before returning. This prevents returning a nonsensical negative lifetime
+// for a key that is in the process of expiring.
+//
 // The Store remains the single authoritative owner of expiration metadata.
 //
 // Engineering Rule:
 //
-// Every command that reads or modifies a key must verify expiration before
+// Every command that reads or modifies a key verifies expiration before
 // operating on it. If the key has already expired, it is lazily removed and
 // treated as absent.
 //
 // Commands following this rule:
 //   - GET
 //   - TTL
+//   - PTTL
 //   - EXPIRE
 //   - PEXPIRE
 //   - PERSIST
@@ -325,9 +373,10 @@
 //   - EXPIREAT
 //   - PEXPIREAT
 //
-// PEXPIREAT introduces only a new client input format. Internally the
-// expiration subsystem remains unchanged because all expiration metadata
-// continues to be stored exclusively in ExpiresAt.
+// PEXPIREAT introduces only a new client input format. PTTL introduces only
+// a new observation unit. Internally the expiration subsystem remains
+// unchanged because all expiration metadata continues to be stored exclusively
+// in ExpiresAt.
 //
 //   - EXPIRE and PEXPIRE share one implementation pattern.
 //   - EXPIREAT and PEXPIREAT share one implementation pattern.
@@ -385,7 +434,6 @@
 // Future milestones may extend the Store with:
 //
 // Expiration:
-//   - PTTL.
 //   - Advanced timeline observation (EXPIRETIME, PEXPIRETIME).
 //   - Configurable cleanup interval.
 //   - Expiration statistics.
