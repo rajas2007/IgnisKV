@@ -25,6 +25,7 @@ func NewDispatcher(s *store.MemoryStore) *Dispatcher {
 
 	d.handlers["PING"] = NewPingHandler()
 	d.handlers["SET"] = NewSetHandler(s)
+	d.handlers["LPUSH"] = NewLPushHandler(s)
 	d.handlers["GET"] = NewGetHandler(s)
 	d.handlers["DEL"] = NewDelHandler(s)
 	d.handlers["TTL"] = NewTTLHandler(s)

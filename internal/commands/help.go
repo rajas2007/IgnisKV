@@ -8,6 +8,7 @@ const helpMessage = `Available commands:
 PING                    Check server health
 SET <key> <value>       Store a value
 SET <key> <value> EX <s> Store a value with expiration
+LPUSH <key> <value> [value ...] Prepend one or more values to a list
 GET <key>               Retrieve a value
 DEL <key>               Delete a key
 TTL <key>               Get remaining lifetime in seconds

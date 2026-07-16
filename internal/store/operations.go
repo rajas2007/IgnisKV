@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"math"
 	"time"
 
@@ -446,4 +447,47 @@ func (s *MemoryStore) PExpireTime(key string) (int64, error) {
 	}
 
 	return v.ExpiresAt.UnixMilli(), nil
+}
+
+// ErrInvalidArguments is returned when an operation is provided with missing or
+// invalid arguments.
+var ErrInvalidArguments = errors.New("invalid arguments")
+
+// LPush prepends one or more values to a list. If the key does not exist,
+// it creates a new list. It returns the new length of the list.
+func (s *MemoryStore) LPush(key string, values ...string) (int64, error) {
+	if len(values) == 0 {
+		return 0, ErrInvalidArguments
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v, ok := s.data[key]
+	if ok && isExpired(v) {
+		s.deleteExpiredLocked(key)
+		ok = false
+	}
+
+	if !ok {
+		v = types.Value{
+			Type: types.ListType,
+			Data: []string{},
+		}
+	} else if v.Type != types.ListType {
+		return 0, ErrWrongType
+	}
+
+	list := v.Data.([]string)
+
+	// Prepend left-to-right (last argument becomes the head)
+	// Example: LPUSH mylist a b c -> [c, b, a, ...]
+	for _, val := range values {
+		list = append([]string{val}, list...)
+	}
+
+	v.Data = list
+	s.data[key] = v
+
+	return int64(len(list)), nil
 }

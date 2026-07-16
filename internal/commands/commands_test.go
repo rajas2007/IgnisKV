@@ -236,6 +236,32 @@ func TestGetWrongArgumentCount(t *testing.T) {
 	}
 }
 
+func TestGetWrongType(t *testing.T) {
+	s := store.NewMemoryStore()
+	h := NewGetHandler(s)
+
+	s.Set("mylist", types.Value{
+		Type: types.ListType,
+		Data: []string{"a", "b"},
+	})
+
+	resp := h.Execute(types.Command{
+		Name: "GET",
+		Args: []string{"mylist"},
+	})
+
+	if resp.Status != types.StatusError {
+		t.Fatalf("GET returned Status %v; want StatusError", resp.Status)
+	}
+
+	if resp.Message != store.ErrWrongType.Error() {
+		t.Fatalf("GET returned Message %q; want %q",
+			resp.Message,
+			store.ErrWrongType.Error(),
+		)
+	}
+}
+
 // ----- DEL tests -----
 
 func TestDelExistingKey(t *testing.T) {

@@ -11,8 +11,10 @@ const (
 	// StringType represents a string value stored by IgnisKV.
 	StringType DataType = iota
 
+	// ListType represents a Redis-compatible ordered string collection stored as []string.
+	ListType
+
 	// Planned future data types for later milestones:
-	// - ListType
 	// - HashType
 	// - SetType
 	// - SortedSetType

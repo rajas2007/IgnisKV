@@ -52,6 +52,13 @@ func (h *GetHandler) Execute(cmd types.Command) types.Response {
 		}
 	}
 
+	if value.Type != types.StringType {
+		return types.Response{
+			Status:  types.StatusError,
+			Message: store.ErrWrongType.Error(),
+		}
+	}
+
 	return types.Response{
 		Status: types.StatusOK,
 		Data:   value.Data,

@@ -8,6 +8,10 @@
 //
 // The package is responsible for:
 //   - In-memory key-value storage.
+//   - Support for multiple Redis-compatible data types.
+//   - String values.
+//   - List values.
+//   - List operations implemented within the Store rather than handlers.
 //   - CRUD operations.
 //   - Thread-safe access using sync.RWMutex.
 //   - Snapshot persistence.
@@ -110,7 +114,14 @@
 //
 // The Store determines *how* data is stored, *how* data expires, *how* expired
 // data is removed, *how* TTL is calculated, *how* expiration changes, and *how*
-// expiration is cleared (mechanism).
+// expiration is cleared (mechanism). The Store owns all type validation.
+//
+// The Store decides:
+//   - whether a key exists
+//   - whether a key has expired
+//   - whether the stored type matches the requested operation
+//
+// Every command operates against exactly one DataType.
 //
 // Handlers may convert client input into Go types. For example, Unix timestamp
 // → time.Time, and for PEXPIRE this means converting milliseconds into
@@ -125,6 +136,26 @@
 // to evolve without affecting the rest of the system.
 //
 // # Architecture
+//
+// Every stored object consists of:
+//   - Type
+//   - Data
+//   - ExpiresAt
+//
+// String values store:
+//
+//	Data -> string
+//
+// List values store:
+//
+//	Data -> []string
+//
+// Lists use Type: ListType to distinguish them from String values while
+// continuing to reuse the same Value abstraction.
+//
+// This architecture was intentionally designed to allow additional data types
+// without changing the Store architecture. Future collection types (Hashes and
+// Sets) will reuse the same Value abstraction.
 //
 // The Store sits at the base of the application architecture:
 //
@@ -200,7 +231,29 @@
 // Each pair shares identical Store semantics.
 // Only the handler input conversion differs.
 //
-// # Current Scope (Sprint 20)
+// # Type Safety
+//
+// Every collection command verifies the stored DataType before operating.
+// If the stored type does not match the requested command, the Store returns
+// ErrWrongType. This provides a single shared type-checking mechanism for
+// every collection command.
+//
+// # Expiration
+//
+// Expiration behavior is identical for all supported data types. Strings and
+// Lists both reuse ExpiresAt, isExpired(), and lazyExpire(). Collection
+// commands never implement separate expiration logic.
+//
+// # Current Scope (Sprint 21)
+//
+// Sprint 21 begins the Collections subsystem.
+//
+// Initially supported collection type:
+//   - Lists
+//
+// LPUSH is the first command in the subsystem. Future list commands will build
+// on the same architecture. LPUSH automatically creates a new list when the
+// target key does not already exist, matching Redis behavior.
 //
 // The Store currently supports:
 //   - Thread-safe in-memory storage.
@@ -288,6 +341,9 @@
 //
 // Absolute timestamps must be in the future.
 //
+// Only LPUSH is implemented during Sprint 21. Other collection commands remain
+// future work.
+//
 // # Background Cleanup
 //
 // Each MemoryStore instance owns exactly one background cleanup goroutine.
@@ -302,6 +358,12 @@
 // because each Store owns one background cleanup goroutine.
 //
 // # Engineering Notes
+//
+// The original Value abstraction now demonstrates its intended purpose. The
+// combination of DataType, Data (interface/any), and ExpiresAt allows multiple
+// Redis-compatible data structures without modifying the Store architecture.
+// This validates the architectural decisions established during the early
+// foundation sprints.
 //
 // Lazy expiration and active expiration coexist. Either mechanism may delete
 // the same key. This is safe because delete(map, key) on a missing key is a
@@ -515,6 +577,17 @@
 // # Future Scope
 //
 // Future milestones may extend the Store with:
+//
+// Collections:
+//
+//	Lists
+//	  ↓
+//	Hashes
+//	  ↓
+//	Sets
+//
+// All future collection types will reuse the existing Value abstraction and
+// type validation infrastructure.
 //
 // Expiration:
 //   - Configurable cleanup interval.

@@ -806,3 +806,88 @@ func TestPExpireTime(t *testing.T) {
 		t.Fatalf("expected expired key to be lazily deleted")
 	}
 }
+
+func TestLPush(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key (creates new list)
+	length, err := s.LPush("mylist", "a")
+	if err != nil {
+		t.Fatalf("expected nil error for missing key, got %v", err)
+	}
+	if length != 1 {
+		t.Fatalf("expected length 1, got %d", length)
+	}
+	val, err := s.Get("mylist")
+	if err != nil || val.Type != types.ListType || len(val.Data.([]string)) != 1 || val.Data.([]string)[0] != "a" {
+		t.Fatalf("expected list [a], got %v", val.Data)
+	}
+
+	// 2. Existing list (multiple values, prepended left-to-right)
+	// LPUSH mylist b c -> should result in [c b a]
+	length, err = s.LPush("mylist", "b", "c")
+	if err != nil {
+		t.Fatalf("expected nil error for existing list, got %v", err)
+	}
+	if length != 3 {
+		t.Fatalf("expected length 3, got %d", length)
+	}
+	val, _ = s.Get("mylist")
+	list := val.Data.([]string)
+	if len(list) != 3 || list[0] != "c" || list[1] != "b" || list[2] != "a" {
+		t.Fatalf("expected list [c b a], got %v", list)
+	}
+
+	// 2.1 Multiple values insert ordering regression test
+	length, err = s.LPush("mylist", "d", "e", "f")
+	if err != nil {
+		t.Fatalf("expected nil error for existing list, got %v", err)
+	}
+	if length != 6 {
+		t.Fatalf("expected length 6, got %d", length)
+	}
+	val, _ = s.Get("mylist")
+	list = val.Data.([]string)
+	if len(list) != 6 || list[0] != "f" || list[1] != "e" || list[2] != "d" || list[3] != "c" || list[4] != "b" || list[5] != "a" {
+		t.Fatalf("expected list [f e d c b a], got %v", list)
+	}
+
+	// 3. WRONGTYPE
+	s.Set("mystring", types.Value{Type: types.StringType, Data: "val"})
+	length, err = s.LPush("mystring", "a")
+	if !errors.Is(err, ErrWrongType) {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected length 0 on error, got %d", length)
+	}
+
+	// 4. Expired list recreation
+	past := time.Now().Add(-1 * time.Second)
+	s.Set("expiredlist", types.Value{
+		Type:      types.ListType,
+		Data:      []string{"old"},
+		ExpiresAt: past,
+	})
+	length, err = s.LPush("expiredlist", "new")
+	if err != nil {
+		t.Fatalf("expected nil error after expiring key, got %v", err)
+	}
+	if length != 1 {
+		t.Fatalf("expected length 1 after recreation, got %d", length)
+	}
+	val, _ = s.Get("expiredlist")
+	list = val.Data.([]string)
+	if len(list) != 1 || list[0] != "new" {
+		t.Fatalf("expected list [new], got %v", list)
+	}
+
+	// 5. No values
+	length, err = s.LPush("mylist")
+	if !errors.Is(err, ErrInvalidArguments) {
+		t.Fatalf("expected ErrInvalidArguments, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected length 0, got %d", length)
+	}
+}
