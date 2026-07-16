@@ -30,6 +30,7 @@ func NewDispatcher(s *store.MemoryStore) *Dispatcher {
 	d.handlers["TTL"] = NewTTLHandler(s)
 	d.handlers["PTTL"] = NewPTTLHandler(s)
 	d.handlers["EXPIRETIME"] = NewExpireTimeHandler(s)
+	d.handlers["PEXPIRETIME"] = NewPExpireTimeHandler(s)
 	d.handlers["EXPIRE"] = NewExpireHandler(s)
 	d.handlers["PEXPIRE"] = NewPExpireHandler(s)
 	d.handlers["PERSIST"] = NewPersistHandler(s)
