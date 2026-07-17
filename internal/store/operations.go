@@ -528,3 +528,26 @@ func (s *MemoryStore) RPush(key string, values ...string) (int64, error) {
 
 	return int64(len(list)), nil
 }
+
+// LLen returns the number of elements stored in a list. If the key does not
+// exist, it returns 0.
+func (s *MemoryStore) LLen(key string) (int64, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+	s.mu.RUnlock()
+
+	if !ok {
+		return 0, nil
+	}
+
+	if isExpired(v) {
+		s.lazyExpire(key)
+		return 0, nil
+	}
+
+	if v.Type != types.ListType {
+		return 0, ErrWrongType
+	}
+
+	return int64(len(v.Data.([]string))), nil
+}

@@ -1033,3 +1033,66 @@ func TestIntegrationRPush(t *testing.T) {
 	// 8. RPUSH stringkey x
 	sendAndVerify("*3\r\n$5\r\nRPUSH\r\n$9\r\nstringkey\r\n$1\r\nx\r\n", "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n")
 }
+
+func TestIntegrationLLen(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	dispatcher := commands.NewDispatcher(s)
+	srv := server.New(dispatcher)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to find free port: %v", err)
+	}
+	address := l.Addr().String()
+	l.Close()
+
+	go func() {
+		_ = srv.Start(address)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 1024)
+	sendAndVerify := func(cmd string, expected string) string {
+		if _, err := conn.Write([]byte(cmd)); err != nil {
+			t.Fatalf("Write error: %v", err)
+		}
+		n, err := conn.Read(buf)
+		if err != nil {
+			t.Fatalf("Read error: %v", err)
+		}
+		response := string(buf[:n])
+		if expected != "" && response != expected {
+			t.Fatalf("Expected %q, got %q", expected, response)
+		}
+		return response
+	}
+
+	// 1. RPUSH mylist a
+	sendAndVerify("*3\r\n$5\r\nRPUSH\r\n$6\r\nmylist\r\n$1\r\na\r\n", ":1\r\n")
+
+	// 2. RPUSH mylist b c
+	sendAndVerify("*4\r\n$5\r\nRPUSH\r\n$6\r\nmylist\r\n$1\r\nb\r\n$1\r\nc\r\n", ":3\r\n")
+
+	// 3. LLEN mylist
+	sendAndVerify("*2\r\n$4\r\nLLEN\r\n$6\r\nmylist\r\n", ":3\r\n")
+
+	// 4. LLEN missing
+	sendAndVerify("*2\r\n$4\r\nLLEN\r\n$7\r\nmissing\r\n", ":0\r\n")
+
+	// 5. SET stringkey value
+	sendAndVerify("*3\r\n$3\r\nSET\r\n$9\r\nstringkey\r\n$5\r\nvalue\r\n", "+OK\r\n")
+
+	// 6. LLEN stringkey
+	sendAndVerify("*2\r\n$4\r\nLLEN\r\n$9\r\nstringkey\r\n", "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n")
+
+	// 7. LLEN with no key
+	sendAndVerify("*1\r\n$4\r\nLLEN\r\n", "-ERR wrong number of arguments\r\n")
+}

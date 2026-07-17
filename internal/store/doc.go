@@ -244,28 +244,73 @@
 // Lists both reuse ExpiresAt, isExpired(), and lazyExpire(). Collection
 // commands never implement separate expiration logic.
 //
-// # Current Scope (Sprint 22)
+// # Current Scope (Sprint 23)
 //
-// Sprint 22 extends the Collections subsystem with RPUSH.
-//
-// The MemoryStore now supports two list insertion operations:
+// The Collections subsystem now supports:
 //   - LPush
 //   - RPush
+//   - LLen
 //
-// Both commands:
-//   - create a list if the key does not exist
-//   - validate the stored DataType
-//   - return ErrWrongType for non-list keys
-//   - support lazy expiration
-//   - preserve thread safety
-//   - reuse the existing Value/DataType infrastructure
+// LLEN is the first read-only collection command.
+// It introduces collection observation without mutation.
+// It reuses the existing ListType infrastructure.
+// It performs lazy expiration.
+// It never modifies list contents.
+// It never performs persistence.
 //
-// RPUSH introduces no new storage structures and continues using:
+// # Collection Command Categories
 //
-//	Value{
-//		Type: ListType,
-//		Data: []string,
-//	}
+// The architectural distinction for collection commands is as follows:
+//
+// Mutating commands
+//   - LPUSH
+//   - RPUSH
+//
+// Characteristics:
+//   - Acquire Lock immediately
+//   - Modify state
+//   - Trigger persistence
+//   - Return updated state
+//
+// Read-only commands
+//   - LLEN
+//
+// Characteristics:
+//   - Begin with RLock
+//   - May lazily expire keys
+//   - Never modify collection contents
+//   - Never trigger persistence
+//
+// This distinction becomes the architectural guideline for all future collection commands.
+//
+// # Collection Invariants
+//
+// Collections never exist in an empty state.
+//
+// When the final element of a collection is removed,
+// the collection key itself is deleted from the store.
+//
+// Consequently:
+//
+// LLEN returning 0 always means:
+//   - the key does not exist
+//   - the key was lazily expired
+//
+// It never means:
+//   - an existing empty list
+//
+// This invariant applies to all future collection types unless
+// explicitly documented otherwise.
+//
+// # Read-only Command Rule
+//
+// Read-only commands never perform persistence.
+//
+// Persistence is exclusively the responsibility of mutating
+// commands.
+//
+// Future read-only collection commands (LLEN, LRANGE, HLEN,
+// SCARD, ZCARD, etc.) must preserve this rule.
 //
 // # Concurrency Model
 //

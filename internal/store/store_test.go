@@ -989,3 +989,87 @@ func TestRPush(t *testing.T) {
 		t.Fatalf("expected length 0, got %d", length)
 	}
 }
+
+func TestLLen(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	length, err := s.LLen("missing")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected length 0, got %d", length)
+	}
+
+	// 2. Existing single-element list
+	s.Set("single", types.Value{
+		Type: types.ListType,
+		Data: []string{"a"},
+	})
+	length, err = s.LLen("single")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 1 {
+		t.Fatalf("expected length 1, got %d", length)
+	}
+
+	// 3. Existing multi-element list
+	s.Set("multi", types.Value{
+		Type: types.ListType,
+		Data: []string{"a", "b", "c"},
+	})
+	length, err = s.LLen("multi")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 3 {
+		t.Fatalf("expected length 3, got %d", length)
+	}
+
+	// 4. WRONGTYPE error
+	s.Set("stringkey", types.Value{
+		Type: types.StringType,
+		Data: "val",
+	})
+	length, err = s.LLen("stringkey")
+	if !errors.Is(err, ErrWrongType) {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected length 0 on error, got %d", length)
+	}
+
+	// 5. Expired list
+	past := time.Now().Add(-1 * time.Second)
+	s.Set("expiredlist", types.Value{
+		Type:      types.ListType,
+		Data:      []string{"a", "b"},
+		ExpiresAt: past,
+	})
+	length, err = s.LLen("expiredlist")
+	if err != nil {
+		t.Fatalf("expected nil error after expiring key, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected length 0 after expiration, got %d", length)
+	}
+	// Verify the key was lazily deleted
+	s.mu.RLock()
+	_, ok := s.data["expiredlist"]
+	s.mu.RUnlock()
+	if ok {
+		t.Fatalf("expected expired list to be lazily deleted")
+	}
+
+	// 6. Public API integration test
+	_, _ = s.RPush("publiclist", "a", "b", "c")
+	length, err = s.LLen("publiclist")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 3 {
+		t.Fatalf("expected length 3, got %d", length)
+	}
+}
