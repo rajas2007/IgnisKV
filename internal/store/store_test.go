@@ -891,3 +891,101 @@ func TestLPush(t *testing.T) {
 		t.Fatalf("expected length 0, got %d", length)
 	}
 }
+
+func TestRPush(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key creates new list
+	length, err := s.RPush("rlist", "a")
+	if err != nil {
+		t.Fatalf("expected nil error for missing key, got %v", err)
+	}
+	if length != 1 {
+		t.Fatalf("expected length 1, got %d", length)
+	}
+	val, _ := s.Get("rlist")
+	if val.Type != types.ListType || len(val.Data.([]string)) != 1 || val.Data.([]string)[0] != "a" {
+		t.Fatalf("expected list [a], got %v", val.Data)
+	}
+
+	// 2. Existing list (appends values)
+	length, err = s.RPush("rlist", "b")
+	if err != nil {
+		t.Fatalf("expected nil error for existing list, got %v", err)
+	}
+	if length != 2 {
+		t.Fatalf("expected length 2, got %d", length)
+	}
+	val, _ = s.Get("rlist")
+	list := val.Data.([]string)
+	if len(list) != 2 || list[0] != "a" || list[1] != "b" {
+		t.Fatalf("expected list [a b], got %v", list)
+	}
+
+	// 3. Multiple-value ordering
+	length, err = s.RPush("rlist", "c", "d", "e")
+	if err != nil {
+		t.Fatalf("expected nil error for multiple values, got %v", err)
+	}
+	if length != 5 {
+		t.Fatalf("expected length 5, got %d", length)
+	}
+	val, _ = s.Get("rlist")
+	list = val.Data.([]string)
+	if len(list) != 5 || list[0] != "a" || list[1] != "b" || list[2] != "c" || list[3] != "d" || list[4] != "e" {
+		t.Fatalf("expected list [a b c d e], got %v", list)
+	}
+
+	// 3.1 Append again to protect against replacement regression
+	length, err = s.RPush("rlist", "f", "g")
+	if err != nil {
+		t.Fatalf("expected nil error for subsequent multiple values, got %v", err)
+	}
+	if length != 7 {
+		t.Fatalf("expected length 7, got %d", length)
+	}
+	val, _ = s.Get("rlist")
+	list = val.Data.([]string)
+	if len(list) != 7 || list[0] != "a" || list[1] != "b" || list[2] != "c" || list[3] != "d" || list[4] != "e" || list[5] != "f" || list[6] != "g" {
+		t.Fatalf("expected list [a b c d e f g], got %v", list)
+	}
+
+	// 4. WRONGTYPE error
+	s.Set("stringkey", types.Value{Type: types.StringType, Data: "val"})
+	length, err = s.RPush("stringkey", "x")
+	if !errors.Is(err, ErrWrongType) {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected length 0 on error, got %d", length)
+	}
+
+	// 5. Expired list recreation
+	past := time.Now().Add(-1 * time.Second)
+	s.Set("expiredlist", types.Value{
+		Type:      types.ListType,
+		Data:      []string{"old"},
+		ExpiresAt: past,
+	})
+	length, err = s.RPush("expiredlist", "new")
+	if err != nil {
+		t.Fatalf("expected nil error after expiring key, got %v", err)
+	}
+	if length != 1 {
+		t.Fatalf("expected length 1 after recreation, got %d", length)
+	}
+	val, _ = s.Get("expiredlist")
+	list = val.Data.([]string)
+	if len(list) != 1 || list[0] != "new" {
+		t.Fatalf("expected list [new], got %v", list)
+	}
+
+	// 6. No values supplied
+	length, err = s.RPush("rlist")
+	if !errors.Is(err, ErrInvalidArguments) {
+		t.Fatalf("expected ErrInvalidArguments, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected length 0, got %d", length)
+	}
+}

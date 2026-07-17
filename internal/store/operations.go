@@ -491,3 +491,40 @@ func (s *MemoryStore) LPush(key string, values ...string) (int64, error) {
 
 	return int64(len(list)), nil
 }
+
+// RPush appends one or more values to a list. If the key does not exist,
+// it creates a new list. It returns the new length of the list.
+func (s *MemoryStore) RPush(key string, values ...string) (int64, error) {
+	if len(values) == 0 {
+		return 0, ErrInvalidArguments
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v, ok := s.data[key]
+	if ok && isExpired(v) {
+		s.deleteExpiredLocked(key)
+		ok = false
+	}
+
+	if !ok {
+		v = types.Value{
+			Type: types.ListType,
+			Data: []string{},
+		}
+	} else if v.Type != types.ListType {
+		return 0, ErrWrongType
+	}
+
+	list := v.Data.([]string)
+
+	// Append values in the order received
+	// Example: RPUSH mylist c d e -> [... c, d, e]
+	list = append(list, values...)
+
+	v.Data = list
+	s.data[key] = v
+
+	return int64(len(list)), nil
+}

@@ -244,16 +244,57 @@
 // Lists both reuse ExpiresAt, isExpired(), and lazyExpire(). Collection
 // commands never implement separate expiration logic.
 //
-// # Current Scope (Sprint 21)
+// # Current Scope (Sprint 22)
 //
-// Sprint 21 begins the Collections subsystem.
+// Sprint 22 extends the Collections subsystem with RPUSH.
 //
-// Initially supported collection type:
-//   - Lists
+// The MemoryStore now supports two list insertion operations:
+//   - LPush
+//   - RPush
 //
-// LPUSH is the first command in the subsystem. Future list commands will build
-// on the same architecture. LPUSH automatically creates a new list when the
-// target key does not already exist, matching Redis behavior.
+// Both commands:
+//   - create a list if the key does not exist
+//   - validate the stored DataType
+//   - return ErrWrongType for non-list keys
+//   - support lazy expiration
+//   - preserve thread safety
+//   - reuse the existing Value/DataType infrastructure
+//
+// RPUSH introduces no new storage structures and continues using:
+//
+//	Value{
+//		Type: ListType,
+//		Data: []string,
+//	}
+//
+// # Concurrency Model
+//
+// The following concurrency model has been established for collection write operations:
+//
+// Always-write operations (SET, DEL, LPUSH, RPUSH) execute as:
+//
+//	Lock
+//	  ↓
+//	Read current value
+//	  ↓
+//	Validate
+//	  ↓
+//	Modify
+//	  ↓
+//	Write
+//	  ↓
+//	Unlock
+//
+// These operations acquire the write lock immediately because:
+//   - They always mutate state.
+//   - Reading and writing must be one atomic operation.
+//   - sync.RWMutex does not support lock upgrading.
+//   - Using RLock followed by Lock would introduce a race window.
+//
+// Contrast this with read-then-maybe-write operations (for example:
+// GET, TTL, PTTL, EXPIRE, and PEXPIRE), which may begin with RLock
+// because they often complete without modifying state.
+// This distinction becomes the concurrency guideline for all future collection commands.
 //
 // The Store currently supports:
 //   - Thread-safe in-memory storage.
