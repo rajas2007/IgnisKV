@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -1071,5 +1072,150 @@ func TestLLen(t *testing.T) {
 	}
 	if length != 3 {
 		t.Fatalf("expected length 3, got %d", length)
+	}
+}
+
+func TestLRange(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	res, err := s.LRange("missing", 0, -1)
+	if err != nil {
+		t.Fatalf("expected nil error for missing key, got %v", err)
+	}
+	if !reflect.DeepEqual(res, []string{}) {
+		t.Fatalf("expected empty slice for missing key, got %v", res)
+	}
+	if res == nil {
+		t.Fatalf("expected non-nil empty slice for missing key")
+	}
+
+	// Set up list for next tests
+	s.Set("list", types.Value{
+		Type: types.ListType,
+		Data: []string{"a", "b", "c", "d", "e"},
+	})
+
+	// 2. Existing list, full range
+	res, err = s.LRange("list", 0, -1)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	expected := []string{"a", "b", "c", "d", "e"}
+	if !reflect.DeepEqual(res, expected) {
+		t.Fatalf("expected %v, got %v", expected, res)
+	}
+
+	// 3. Existing list, partial range
+	res, err = s.LRange("list", 1, 3)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	expected = []string{"b", "c", "d"}
+	if !reflect.DeepEqual(res, expected) {
+		t.Fatalf("expected %v, got %v", expected, res)
+	}
+
+	// 4. Single element
+	res, err = s.LRange("list", 2, 2)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	expected = []string{"c"}
+	if !reflect.DeepEqual(res, expected) {
+		t.Fatalf("expected %v, got %v", expected, res)
+	}
+
+	// 5. Negative indices
+	res, err = s.LRange("list", -2, -1)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	expected = []string{"d", "e"}
+	if !reflect.DeepEqual(res, expected) {
+		t.Fatalf("expected %v, got %v", expected, res)
+	}
+
+	// 6. Start greater than stop
+	res, err = s.LRange("list", 4, 2)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !reflect.DeepEqual(res, []string{}) {
+		t.Fatalf("expected empty slice, got %v", res)
+	}
+
+	// 7. Stop beyond length
+	res, err = s.LRange("list", 2, 100)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	expected = []string{"c", "d", "e"}
+	if !reflect.DeepEqual(res, expected) {
+		t.Fatalf("expected %v, got %v", expected, res)
+	}
+
+	// 8. Start beyond length
+	res, err = s.LRange("list", 100, 200)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !reflect.DeepEqual(res, []string{}) {
+		t.Fatalf("expected empty slice, got %v", res)
+	}
+
+	// 9. Very negative indices
+	res, err = s.LRange("list", -100, -1)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	expected = []string{"a", "b", "c", "d", "e"}
+	if !reflect.DeepEqual(res, expected) {
+		t.Fatalf("expected %v, got %v", expected, res)
+	}
+
+	// 10. Wrong type
+	s.Set("stringkey", types.Value{
+		Type: types.StringType,
+		Data: "val",
+	})
+	_, err = s.LRange("stringkey", 0, -1)
+	if !errors.Is(err, ErrWrongType) {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+
+	// 11. Expired key
+	past := time.Now().Add(-1 * time.Second)
+	s.Set("expired", types.Value{
+		Type:      types.ListType,
+		Data:      []string{"a", "b"},
+		ExpiresAt: past,
+	})
+	res, err = s.LRange("expired", 0, -1)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !reflect.DeepEqual(res, []string{}) {
+		t.Fatalf("expected empty slice, got %v", res)
+	}
+	s.mu.RLock()
+	_, ok := s.data["expired"]
+	s.mu.RUnlock()
+	if ok {
+		t.Fatalf("expected expired key to be lazily deleted")
+	}
+
+	// 12. Returned slice ownership
+	s.Set("owner", types.Value{
+		Type: types.ListType,
+		Data: []string{"a", "b", "c"},
+	})
+	res, _ = s.LRange("owner", 0, -1)
+	res[0] = "modified"
+
+	res2, _ := s.LRange("owner", 0, -1)
+	expected = []string{"a", "b", "c"}
+	if !reflect.DeepEqual(res2, expected) {
+		t.Fatalf("slice modification affected store, expected %v but got %v", expected, res2)
 	}
 }

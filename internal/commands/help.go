@@ -11,6 +11,7 @@ SET <key> <value> EX <s> Store a value with expiration
 LPUSH <key> <value> [value ...] Prepend one or more values to a list
 RPUSH <key> <value> [value ...] Append one or more values to a list
 LLEN <key>              Get the length of a list
+LRANGE <key> <start> <stop> Get a range of elements from a list
 GET <key>               Retrieve a value
 DEL <key>               Delete a key
 TTL <key>               Get remaining lifetime in seconds

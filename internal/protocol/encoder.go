@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/rajas2007/IgnisKV/internal/types"
 )
@@ -31,6 +32,18 @@ func EncodeRESP(resp types.Response) []byte {
 
 	case types.StatusExit:
 		return []byte("+BYE\r\n")
+
+	case types.StatusArray:
+		values, ok := resp.Data.([]string)
+		if !ok {
+			return []byte("-ERR internal error: invalid array data\r\n")
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "*%d\r\n", len(values))
+		for _, v := range values {
+			fmt.Fprintf(&b, "$%d\r\n%s\r\n", len(v), v)
+		}
+		return []byte(b.String())
 
 	default:
 		// Defensive fallback.

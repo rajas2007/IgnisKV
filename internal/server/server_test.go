@@ -1096,3 +1096,100 @@ func TestIntegrationLLen(t *testing.T) {
 	// 7. LLEN with no key
 	sendAndVerify("*1\r\n$4\r\nLLEN\r\n", "-ERR wrong number of arguments\r\n")
 }
+
+func TestIntegrationLRange(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	dispatcher := commands.NewDispatcher(s)
+	srv := server.New(dispatcher)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to find free port: %v", err)
+	}
+	address := l.Addr().String()
+	l.Close()
+
+	go func() {
+		_ = srv.Start(address)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 1024)
+	sendAndVerify := func(cmd string, expected string) string {
+		if _, err := conn.Write([]byte(cmd)); err != nil {
+			t.Fatalf("Write error: %v", err)
+		}
+		n, err := conn.Read(buf)
+		if err != nil {
+			t.Fatalf("Read error: %v", err)
+		}
+		response := string(buf[:n])
+		if expected != "" && response != expected {
+			t.Fatalf("Expected %q, got %q", expected, response)
+		}
+		return response
+	}
+
+	// 1. RPUSH mylist a b c d e
+	sendAndVerify(
+		"*7\r\n"+
+			"$5\r\nRPUSH\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$1\r\na\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\nc\r\n"+
+			"$1\r\nd\r\n"+
+			"$1\r\ne\r\n",
+		":5\r\n",
+	)
+
+	// 2. LRANGE mylist 0 -1
+	sendAndVerify(
+		"*4\r\n"+
+			"$6\r\nLRANGE\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$1\r\n0\r\n"+
+			"$2\r\n-1\r\n",
+		"*5\r\n"+
+			"$1\r\na\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\nc\r\n"+
+			"$1\r\nd\r\n"+
+			"$1\r\ne\r\n",
+	)
+
+	// 3. LRANGE mylist 1 3
+	sendAndVerify("*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$1\r\n1\r\n$1\r\n3\r\n", "*3\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nd\r\n")
+
+	// 4. LRANGE mylist -2 -1
+	sendAndVerify("*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$2\r\n-2\r\n$2\r\n-1\r\n", "*2\r\n$1\r\nd\r\n$1\r\ne\r\n")
+
+	// 5. LRANGE mylist 100 200
+	sendAndVerify("*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$3\r\n100\r\n$3\r\n200\r\n", "*0\r\n")
+
+	// 6. LRANGE missing 0 -1
+	sendAndVerify("*4\r\n$6\r\nLRANGE\r\n$7\r\nmissing\r\n$1\r\n0\r\n$2\r\n-1\r\n", "*0\r\n")
+
+	// 7. SET stringkey value
+	sendAndVerify("*3\r\n$3\r\nSET\r\n$9\r\nstringkey\r\n$5\r\nvalue\r\n", "+OK\r\n")
+
+	// 8. LRANGE stringkey 0 -1
+	sendAndVerify("*4\r\n$6\r\nLRANGE\r\n$9\r\nstringkey\r\n$1\r\n0\r\n$2\r\n-1\r\n", "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n")
+
+	// 9. LRANGE with missing arguments
+	sendAndVerify("*2\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n", "-ERR wrong number of arguments\r\n")
+
+	// 10. Invalid start
+	sendAndVerify("*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$3\r\nabc\r\n$2\r\n-1\r\n", "-ERR value is not an integer or out of range\r\n")
+
+	// 11. Invalid stop
+	sendAndVerify("*4\r\n$6\r\nLRANGE\r\n$6\r\nmylist\r\n$1\r\n0\r\n$3\r\nxyz\r\n", "-ERR value is not an integer or out of range\r\n")
+}

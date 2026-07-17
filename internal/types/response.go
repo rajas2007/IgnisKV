@@ -28,6 +28,10 @@ const (
 	// StatusInteger indicates that the command returns an integer reply.
 	// Data holds the string representation of the integer.
 	StatusInteger
+
+	// StatusArray indicates that the command returns an array of replies.
+	// Data holds a slice containing the elements.
+	StatusArray
 )
 
 // Response represents the result of a command handler's execution.

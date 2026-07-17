@@ -551,3 +551,75 @@ func (s *MemoryStore) LLen(key string) (int64, error) {
 
 	return int64(len(v.Data.([]string))), nil
 }
+
+// normalizeRange converts possibly negative, out-of-bounds start and stop indices
+// into valid zero-indexed slice bounds. It returns the normalized start and stop
+// (inclusive) indices, and a boolean indicating whether the range is valid.
+func normalizeRange(start, stop int64, length int) (int, int, bool) {
+	if start < 0 {
+		start = int64(length) + start
+	}
+	if stop < 0 {
+		stop = int64(length) + stop
+	}
+
+	if start < 0 {
+		start = 0
+	}
+	if stop >= int64(length) {
+		stop = int64(length) - 1
+	}
+
+	if stop < 0 {
+		return 0, 0, false
+	}
+
+	if start >= int64(length) {
+		return 0, 0, false
+	}
+	if start > stop {
+		return 0, 0, false
+	}
+
+	return int(start), int(stop), true
+}
+
+// LRange returns a copy of the specified elements of the list stored at key.
+// The offsets start and stop are zero-based indexes, with 0 being the first
+// element of the list, 1 being the next element and so on.
+// These offsets can also be negative numbers indicating offsets starting at
+// the end of the list. For example, -1 is the last element of the list, -2
+// the penultimate, and so on.
+//
+// LRANGE never mutates the underlying list and always returns a copy of the
+// requested slice to preserve thread safety.
+func (s *MemoryStore) LRange(key string, start, stop int64) ([]string, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+	s.mu.RUnlock()
+
+	if !ok {
+		return []string{}, nil
+	}
+
+	if isExpired(v) {
+		s.lazyExpire(key)
+		return []string{}, nil
+	}
+
+	if v.Type != types.ListType {
+		return nil, ErrWrongType
+	}
+
+	list := v.Data.([]string)
+
+	normStart, normStop, valid := normalizeRange(start, stop, len(list))
+	if !valid {
+		return []string{}, nil
+	}
+
+	// normStop is inclusive, so we slice up to normStop + 1
+	// We return a copy of the slice to protect the internal storage from
+	// concurrent modification after the RLock has been released.
+	return append([]string(nil), list[normStart:normStop+1]...), nil
+}

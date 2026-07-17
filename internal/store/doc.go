@@ -244,19 +244,21 @@
 // Lists both reuse ExpiresAt, isExpired(), and lazyExpire(). Collection
 // commands never implement separate expiration logic.
 //
-// # Current Scope (Sprint 23)
+// # Current Scope (Sprint 24)
 //
 // The Collections subsystem now supports:
 //   - LPush
 //   - RPush
 //   - LLen
+//   - LRange
 //
-// LLEN is the first read-only collection command.
-// It introduces collection observation without mutation.
-// It reuses the existing ListType infrastructure.
+// LRANGE is the first range-based collection command.
+// It introduces index normalization.
+// It supports positive and negative indices.
 // It performs lazy expiration.
-// It never modifies list contents.
+// It never mutates collection contents.
 // It never performs persistence.
+// It returns a copy of the requested range.
 //
 // # Collection Command Categories
 //
@@ -274,6 +276,7 @@
 //
 // Read-only commands
 //   - LLEN
+//   - LRANGE
 //
 // Characteristics:
 //   - Begin with RLock
@@ -282,6 +285,27 @@
 //   - Never trigger persistence
 //
 // This distinction becomes the architectural guideline for all future collection commands.
+//
+// # Range-Based Collection Operations
+//
+// Collection readers are now divided into:
+//
+// Point readers
+//   - LLEN
+//
+// Range readers
+//   - LRANGE
+//
+// Point readers observe a single property of a collection.
+// Range readers return a normalized subset of collection elements.
+//
+// Both:
+//   - begin with RLock
+//   - may lazily expire keys
+//   - never mutate data
+//   - never perform persistence
+//
+// This distinction becomes the architectural guideline for future range-based commands.
 //
 // # Collection Invariants
 //
@@ -302,15 +326,61 @@
 // This invariant applies to all future collection types unless
 // explicitly documented otherwise.
 //
-// # Read-only Command Rule
+// # Range Normalization
 //
-// Read-only commands never perform persistence.
+// The canonical normalization algorithm:
 //
-// Persistence is exclusively the responsibility of mutating
-// commands.
+// normalizeRange(start, stop, length)
 //
-// Future read-only collection commands (LLEN, LRANGE, HLEN,
-// SCARD, ZCARD, etc.) must preserve this rule.
+// Rules:
+//
+// 1. Negative indices count from the end.
+// Examples:
+// -1 = last element
+// -2 = second last
+//
+// 2. Indices are clamped to valid bounds.
+//
+// 3. If start exceeds the normalized stop:
+// Return an empty range.
+//
+// 4. The stop index is inclusive.
+//
+// 5. The returned ordering always matches the underlying list.
+//
+// This algorithm becomes the reusable specification for:
+//   - LRANGE
+//   - LTRIM
+//   - LINDEX
+//   - Future sorted-set range commands
+//
+// # Slice Ownership
+//
+// LRANGE never returns a reference to the internal slice.
+// Instead it returns a copy.
+//
+// Reason:
+// The returned slice survives after RLock has been released.
+// Returning internal storage would expose shared mutable memory
+// to concurrent writers such as LPUSH and RPUSH.
+//
+// Returning a copy:
+//   - preserves thread safety
+//   - avoids data races
+//   - protects internal storage
+//   - provides stable ownership semantics
+//
+// This rule applies to every future command returning collections.
+//
+// # Read-only Collection Rule
+//
+// LLEN, LRANGE, and future collection readers:
+//   - never mutate state
+//   - never trigger persistence
+//   - may lazily expire keys
+//   - always preserve Redis-compatible semantics
+//
+// Persistence is exclusively the responsibility of mutating commands.
 //
 // # Concurrency Model
 //
@@ -664,13 +734,15 @@
 //
 // Future milestones may extend the Store with:
 //
-// Collections:
+// Additional collection types:
 //
-//	Lists
-//	  ↓
 //	Hashes
 //	  ↓
 //	Sets
+//	  ↓
+//	Sorted Sets
+//
+// The Lists subsystem is currently under active development.
 //
 // All future collection types will reuse the existing Value abstraction and
 // type validation infrastructure.
