@@ -32,6 +32,10 @@ const (
 	// StatusArray indicates that the command returns an array of replies.
 	// Data holds a slice containing the elements.
 	StatusArray
+
+	// StatusString indicates that the command returns a bulk string reply.
+	// Data holds the string value.
+	StatusString
 )
 
 // Response represents the result of a command handler's execution.

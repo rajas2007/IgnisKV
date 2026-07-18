@@ -244,21 +244,19 @@
 // Lists both reuse ExpiresAt, isExpired(), and lazyExpire(). Collection
 // commands never implement separate expiration logic.
 //
-// # Current Scope (Sprint 24)
+// # Current Scope (Sprint 25)
 //
 // The Collections subsystem now supports:
-//   - LPush
-//   - RPush
-//   - LLen
-//   - LRange
+//   - LPUSH
+//   - RPUSH
+//   - LLEN
+//   - LRANGE
+//   - LPOP
 //
-// LRANGE is the first range-based collection command.
-// It introduces index normalization.
-// It supports positive and negative indices.
-// It performs lazy expiration.
-// It never mutates collection contents.
-// It never performs persistence.
-// It returns a copy of the requested range.
+// LPOP is the first destructive collection operation.
+// It removes and returns the left-most element.
+// It mutates collection state.
+// It preserves all existing collection invariants.
 //
 // # Collection Command Categories
 //
@@ -267,24 +265,25 @@
 // Mutating commands
 //   - LPUSH
 //   - RPUSH
+//   - LPOP
 //
 // Characteristics:
-//   - Acquire Lock immediately
-//   - Modify state
-//   - Trigger persistence
-//   - Return updated state
+//   - acquire Lock immediately
+//   - modify collection state
+//   - trigger persistence
+//   - preserve collection invariants
 //
 // Read-only commands
 //   - LLEN
 //   - LRANGE
 //
 // Characteristics:
-//   - Begin with RLock
-//   - May lazily expire keys
-//   - Never modify collection contents
-//   - Never trigger persistence
+//   - begin with RLock
+//   - may lazily expire keys
+//   - never modify collection contents
+//   - never trigger persistence
 //
-// This distinction becomes the architectural guideline for all future collection commands.
+// This distinction remains the architectural guideline for future collection commands.
 //
 // # Range-Based Collection Operations
 //
@@ -311,8 +310,13 @@
 //
 // Collections never exist in an empty state.
 //
-// When the final element of a collection is removed,
-// the collection key itself is deleted from the store.
+// When the final element is removed:
+//   - delete the key
+//   - future access behaves exactly like a missing key
+//
+// LPOP does NOT implement special-case deletion.
+// Instead, it enforces the collection invariant that was locked before the Collections milestone.
+// Future destructive collection commands will follow the same invariant.
 //
 // Consequently:
 //
@@ -322,9 +326,6 @@
 //
 // It never means:
 //   - an existing empty list
-//
-// This invariant applies to all future collection types unless
-// explicitly documented otherwise.
 //
 // # Range Normalization
 //
@@ -372,21 +373,26 @@
 //
 // This rule applies to every future command returning collections.
 //
-// # Read-only Collection Rule
+// # LPOP Semantics
 //
-// LLEN, LRANGE, and future collection readers:
-//   - never mutate state
-//   - never trigger persistence
-//   - may lazily expire keys
-//   - always preserve Redis-compatible semantics
+// LPOP:
+//   - removes the first element
+//   - returns the removed element
+//   - missing or expired keys return Nil
+//   - WRONGTYPE is returned for non-list keys
 //
-// Persistence is exclusively the responsibility of mutating commands.
+// # Persistence Rule
+//
+// Mutating commands persist state only after a successful modification.
+// Read-only commands never trigger persistence.
+//
+// This separation continues to define the persistence architecture of the Collections subsystem.
 //
 // # Concurrency Model
 //
 // The following concurrency model has been established for collection write operations:
 //
-// Always-write operations (SET, DEL, LPUSH, RPUSH) execute as:
+// Always-write operations (SET, DEL, LPUSH, RPUSH, LPOP) execute as:
 //
 //	Lock
 //	  ↓

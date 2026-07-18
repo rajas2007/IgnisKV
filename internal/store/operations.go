@@ -623,3 +623,53 @@ func (s *MemoryStore) LRange(key string, start, stop int64) ([]string, error) {
 	// concurrent modification after the RLock has been released.
 	return append([]string(nil), list[normStart:normStop+1]...), nil
 }
+
+// LPop removes and returns the left-most element of the list stored at key.
+// If the key does not exist or has expired, it returns an empty string and a nil error.
+// The handler translates this empty result into a RESP Nil reply.
+// If the key exists but is not a list, it returns ErrWrongType.
+// LPop preserves the invariant that empty collections never exist: if removing
+// the last element leaves the list empty, the key is deleted from the store.
+func (s *MemoryStore) LPop(key string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v, ok := s.data[key]
+	if ok && isExpired(v) {
+		s.deleteExpiredLocked(key)
+		ok = false
+	}
+
+	if !ok {
+		return "", nil
+	}
+
+	if v.Type != types.ListType {
+		return "", ErrWrongType
+	}
+
+	list := v.Data.([]string)
+
+	// Defensive check.
+	// Empty collections should never exist because the collection
+	// invariant deletes keys when the last element is removed.
+	// If an empty list is encountered (for example, manually
+	// injected during testing), remove the invalid key and treat
+	// it as missing.
+	if len(list) == 0 {
+		delete(s.data, key)
+		return "", nil
+	}
+
+	element := list[0]
+	list = list[1:]
+
+	if len(list) == 0 {
+		delete(s.data, key)
+	} else {
+		v.Data = list
+		s.data[key] = v
+	}
+
+	return element, nil
+}

@@ -45,6 +45,13 @@ func EncodeRESP(resp types.Response) []byte {
 		}
 		return []byte(b.String())
 
+	case types.StatusString:
+		str, ok := resp.Data.(string)
+		if !ok {
+			return []byte("-ERR internal error: invalid string data\r\n")
+		}
+		return []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(str), str))
+
 	default:
 		// Defensive fallback.
 		// Should never happen for valid Response values.
