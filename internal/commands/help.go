@@ -12,6 +12,8 @@ LPUSH <key> <value> [value ...] Prepend one or more values to a list
 RPUSH <key> <value> [value ...] Append one or more values to a list
 LLEN <key>              Get the length of a list
 LRANGE <key> <start> <stop> Get a range of elements from a list
+LPOP <key>              Remove and return the first element of a list
+RPOP <key>              Remove and return the last element of a list
 GET <key>               Retrieve a value
 DEL <key>               Delete a key
 TTL <key>               Get remaining lifetime in seconds

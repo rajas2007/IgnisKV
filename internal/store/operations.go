@@ -673,3 +673,52 @@ func (s *MemoryStore) LPop(key string) (string, error) {
 
 	return element, nil
 }
+
+// RPop removes and returns the right-most element.
+// Missing key returns empty string with nil error.
+// The handler translates this into RESP Nil.
+// RPOP mirrors LPOP, differing only in removal direction.
+func (s *MemoryStore) RPop(key string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v, ok := s.data[key]
+	if ok && isExpired(v) {
+		s.deleteExpiredLocked(key)
+		ok = false
+	}
+
+	if !ok {
+		return "", nil
+	}
+
+	if v.Type != types.ListType {
+		return "", ErrWrongType
+	}
+
+	list := v.Data.([]string)
+
+	// Defensive check.
+	// Empty collections should never exist because the collection
+	// invariant deletes keys when the last element is removed.
+	// If an empty list is encountered (for example, manually
+	// injected during testing), remove the invalid key and treat
+	// it as missing.
+	if len(list) == 0 {
+		delete(s.data, key)
+		return "", nil
+	}
+
+	lastIdx := len(list) - 1
+	element := list[lastIdx]
+	list = list[:lastIdx]
+
+	if len(list) == 0 {
+		delete(s.data, key)
+	} else {
+		v.Data = list
+		s.data[key] = v
+	}
+
+	return element, nil
+}

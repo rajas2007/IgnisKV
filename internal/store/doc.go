@@ -252,11 +252,19 @@
 //   - LLEN
 //   - LRANGE
 //   - LPOP
+//   - RPOP
 //
 // LPOP is the first destructive collection operation.
 // It removes and returns the left-most element.
 // It mutates collection state.
 // It preserves all existing collection invariants.
+//
+// RPOP is the right-side counterpart to LPOP.
+// It removes and returns the right-most element of a list.
+// It mutates collection state.
+// It preserves all existing collection invariants.
+//
+// RPOP follows identical semantics to LPOP, differing only in removal direction.
 //
 // # Collection Command Categories
 //
@@ -266,6 +274,7 @@
 //   - LPUSH
 //   - RPUSH
 //   - LPOP
+//   - RPOP
 //
 // Characteristics:
 //   - acquire Lock immediately
@@ -283,7 +292,7 @@
 //   - never modify collection contents
 //   - never trigger persistence
 //
-// This distinction remains the architectural guideline for future collection commands.
+// This distinction remains the architectural guideline for all future collection commands.
 //
 // # Range-Based Collection Operations
 //
@@ -314,8 +323,8 @@
 //   - delete the key
 //   - future access behaves exactly like a missing key
 //
-// LPOP does NOT implement special-case deletion.
-// Instead, it enforces the collection invariant that was locked before the Collections milestone.
+// LPOP and RPOP do NOT implement special-case deletion.
+// Instead, both enforce this subsystem-wide invariant.
 // Future destructive collection commands will follow the same invariant.
 //
 // Consequently:
@@ -381,6 +390,14 @@
 //   - missing or expired keys return Nil
 //   - WRONGTYPE is returned for non-list keys
 //
+// # RPOP Semantics
+//
+// RPOP:
+//   - removes the last element
+//   - returns the removed element
+//   - missing or expired keys return Nil
+//   - WRONGTYPE is returned for non-list keys
+//
 // # Persistence Rule
 //
 // Mutating commands persist state only after a successful modification.
@@ -392,7 +409,7 @@
 //
 // The following concurrency model has been established for collection write operations:
 //
-// Always-write operations (SET, DEL, LPUSH, RPUSH, LPOP) execute as:
+// Always-write operations (SET, DEL, LPUSH, RPUSH, LPOP, RPOP) execute as:
 //
 //	Lock
 //	  ↓
@@ -503,8 +520,9 @@
 //
 // Absolute timestamps must be in the future.
 //
-// Only LPUSH is implemented during Sprint 21. Other collection commands remain
-// future work.
+// The Lists subsystem now supports insertion, observation, range queries,
+// and removal operations. Additional collection types (Hashes, Sets, and
+// Sorted Sets) remain future work.
 //
 // # Background Cleanup
 //
