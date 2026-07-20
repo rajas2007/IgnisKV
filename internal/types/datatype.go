@@ -14,8 +14,10 @@ const (
 	// ListType represents a Redis-compatible ordered string collection stored as []string.
 	ListType
 
+	// HashType represents a Redis-compatible hash map stored as map[string]string.
+	HashType
+
 	// Planned future data types for later milestones:
-	// - HashType
 	// - SetType
 	// - SortedSetType
 )
