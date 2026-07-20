@@ -119,3 +119,52 @@ func (s *MemoryStore) HExists(key, field string) (bool, error) {
 
 	return exists, nil
 }
+
+// HDel removes the specified fields from the hash stored at key.
+// It returns the number of fields that were removed from the hash, not including
+// specified but non-existing fields.
+// If the key does not exist, it returns 0.
+// If the key exists but is not a hash, it returns ErrWrongType.
+// If the hash becomes empty after deletion, the key is deleted from the store.
+func (s *MemoryStore) HDel(key string, fields []string) (int, error) {
+	if len(fields) == 0 {
+		return 0, ErrInvalidArguments
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v, ok := s.data[key]
+	if ok && isExpired(v) {
+		s.deleteExpiredLocked(key)
+		ok = false
+	}
+
+	if !ok {
+		return 0, nil
+	}
+
+	if v.Type != types.HashType {
+		return 0, ErrWrongType
+	}
+
+	hashMap := v.Data.(map[string]string)
+	deleted := 0
+
+	for _, field := range fields {
+		if _, exists := hashMap[field]; exists {
+			delete(hashMap, field)
+			deleted++
+		}
+	}
+
+	if len(hashMap) == 0 {
+		delete(s.data, key)
+	} else {
+		// Update map
+		v.Data = hashMap
+		s.data[key] = v
+	}
+
+	return deleted, nil
+}

@@ -268,3 +268,111 @@ func TestHExists(t *testing.T) {
 		t.Fatalf("expected key to be physically deleted after lazy expiration")
 	}
 }
+
+func TestHDel(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	deleted, err := s.HDel("missing_key", []string{"f1"})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("expected 0 deleted, got %d", deleted)
+	}
+
+	// 2. Wrong type
+	s.Set("string_key", types.Value{Type: types.StringType, Data: "val"})
+	_, err = s.HDel("string_key", []string{"f1"})
+	if err != ErrWrongType {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+
+	// 3. Single field deletion
+	s.HSet("hash1", []string{"f1", "v1", "f2", "v2"})
+	deleted, err = s.HDel("hash1", []string{"f1"})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("expected 1 deleted, got %d", deleted)
+	}
+
+	// 4. Multiple field deletion and Mixed existing/missing fields
+	s.HSet("hash2", []string{"f1", "v1", "f2", "v2", "f3", "v3", "f4", "v4"})
+	deleted, err = s.HDel("hash2", []string{"f1", "f2", "missing1", "f3", "missing2"})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if deleted != 3 {
+		t.Fatalf("expected 3 deleted, got %d", deleted)
+	}
+
+	// 5. Duplicate field names (HDEL hash f1 f1 f1)
+	s.HSet("hash3", []string{"f1", "v1", "f2", "v2"})
+	deleted, err = s.HDel("hash3", []string{"f1", "f1", "f1"})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	// "f1" is deleted once -> total 1
+	if deleted != 1 {
+		t.Fatalf("expected 1 deleted, got %d", deleted)
+	}
+	vHash3, _ := s.Get("hash3")
+	m3 := vHash3.Data.(map[string]string)
+	if _, ok := m3["f1"]; ok {
+		t.Fatalf("expected f1 to be removed")
+	}
+	if val, ok := m3["f2"]; !ok || val != "v2" {
+		t.Fatalf("expected f2 to remain unchanged, got %v", val)
+	}
+
+	// 6. Delete last field removes key (empty hash invariant)
+	s.HSet("hash4", []string{"f1", "v1"})
+	deleted, err = s.HDel("hash4", []string{"f1"})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("expected 1 deleted, got %d", deleted)
+	}
+	if s.Exists("hash4") {
+		t.Fatalf("expected key to be deleted after last field removed")
+	}
+
+	// 7. TTL preserved when hash remains
+	now := time.Now()
+	s.Set("hash5", types.Value{
+		Type:      types.HashType,
+		Data:      map[string]string{"f1": "v1", "f2": "v2"},
+		ExpiresAt: now.Add(1 * time.Minute),
+	})
+	deleted, err = s.HDel("hash5", []string{"f1"})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("expected 1 deleted, got %d", deleted)
+	}
+	v, _ := s.Get("hash5") // Wait, Get() returns a copy. This is fine to read ExpiresAt
+	if v.ExpiresAt.IsZero() || v.ExpiresAt.Before(now) {
+		t.Fatalf("expected TTL to be preserved, got %v", v.ExpiresAt)
+	}
+
+	// 8. Lazy expiration
+	s.Set("hash_expired", types.Value{
+		Type:      types.HashType,
+		Data:      map[string]string{"f": "v"},
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	})
+	deleted, err = s.HDel("hash_expired", []string{"f"})
+	if err != nil {
+		t.Fatalf("expected nil error for expired key, got %v", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("expected 0 deleted, got %d", deleted)
+	}
+	if s.Exists("hash_expired") {
+		t.Fatalf("expected key to be physically deleted after lazy expiration")
+	}
+}
