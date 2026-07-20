@@ -1741,3 +1741,200 @@ func TestIntegrationLSet(t *testing.T) {
 		"-ERR value is not an integer or out of range\r\n",
 	)
 }
+
+func TestIntegrationLRem(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	dispatcher := commands.NewDispatcher(s)
+	srv := server.New(dispatcher)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to find free port: %v", err)
+	}
+	address := l.Addr().String()
+	l.Close()
+
+	go func() {
+		_ = srv.Start(address)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 1024)
+	sendAndVerify := func(cmd string, expected string) string {
+		if _, err := conn.Write([]byte(cmd)); err != nil {
+			t.Fatalf("Write error: %v", err)
+		}
+		n, err := conn.Read(buf)
+		if err != nil {
+			t.Fatalf("Read error: %v", err)
+		}
+		response := string(buf[:n])
+		if expected != "" && response != expected {
+			t.Fatalf("Expected %q, got %q", expected, response)
+		}
+		return response
+	}
+
+	// 1. RPUSH mylist a b a c a
+	sendAndVerify(
+		"*7\r\n"+
+			"$5\r\nRPUSH\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$1\r\na\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\na\r\n"+
+			"$1\r\nc\r\n"+
+			"$1\r\na\r\n",
+		":5\r\n",
+	)
+
+	// 2. LREM mylist 2 a
+	sendAndVerify(
+		"*4\r\n"+
+			"$4\r\nLREM\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$1\r\n2\r\n"+
+			"$1\r\na\r\n",
+		":2\r\n",
+	)
+
+	// 3. LRANGE mylist 0 -1
+	sendAndVerify(
+		"*4\r\n"+
+			"$6\r\nLRANGE\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$1\r\n0\r\n"+
+			"$2\r\n-1\r\n",
+		"*3\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\nc\r\n"+
+			"$1\r\na\r\n",
+	)
+
+	// 4. RPUSH list2 a b a c a
+	sendAndVerify(
+		"*7\r\n"+
+			"$5\r\nRPUSH\r\n"+
+			"$5\r\nlist2\r\n"+
+			"$1\r\na\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\na\r\n"+
+			"$1\r\nc\r\n"+
+			"$1\r\na\r\n",
+		":5\r\n",
+	)
+
+	// 5. LREM list2 -2 a
+	sendAndVerify(
+		"*4\r\n"+
+			"$4\r\nLREM\r\n"+
+			"$5\r\nlist2\r\n"+
+			"$2\r\n-2\r\n"+
+			"$1\r\na\r\n",
+		":2\r\n",
+	)
+
+	// 6. LRANGE list2 0 -1
+	sendAndVerify(
+		"*4\r\n"+
+			"$6\r\nLRANGE\r\n"+
+			"$5\r\nlist2\r\n"+
+			"$1\r\n0\r\n"+
+			"$2\r\n-1\r\n",
+		"*3\r\n"+
+			"$1\r\na\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\nc\r\n",
+	)
+
+	// 7. RPUSH list3 a b a c a
+	sendAndVerify(
+		"*7\r\n"+
+			"$5\r\nRPUSH\r\n"+
+			"$5\r\nlist3\r\n"+
+			"$1\r\na\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\na\r\n"+
+			"$1\r\nc\r\n"+
+			"$1\r\na\r\n",
+		":5\r\n",
+	)
+
+	// 8. LREM list3 0 a
+	sendAndVerify(
+		"*4\r\n"+
+			"$4\r\nLREM\r\n"+
+			"$5\r\nlist3\r\n"+
+			"$1\r\n0\r\n"+
+			"$1\r\na\r\n",
+		":3\r\n",
+	)
+
+	// 9. LRANGE list3 0 -1
+	sendAndVerify(
+		"*4\r\n"+
+			"$6\r\nLRANGE\r\n"+
+			"$5\r\nlist3\r\n"+
+			"$1\r\n0\r\n"+
+			"$2\r\n-1\r\n",
+		"*2\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\nc\r\n",
+	)
+
+	// 10. LREM missing 1 a
+	sendAndVerify(
+		"*4\r\n"+
+			"$4\r\nLREM\r\n"+
+			"$7\r\nmissing\r\n"+
+			"$1\r\n1\r\n"+
+			"$1\r\na\r\n",
+		":0\r\n",
+	)
+
+	// 11. SET stringkey value
+	sendAndVerify(
+		"*3\r\n"+
+			"$3\r\nSET\r\n"+
+			"$9\r\nstringkey\r\n"+
+			"$5\r\nvalue\r\n",
+		"+OK\r\n",
+	)
+
+	// 12. LREM stringkey 1 a
+	sendAndVerify(
+		"*4\r\n"+
+			"$4\r\nLREM\r\n"+
+			"$9\r\nstringkey\r\n"+
+			"$1\r\n1\r\n"+
+			"$1\r\na\r\n",
+		"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+	)
+
+	// 13. LREM with missing arguments
+	sendAndVerify(
+		"*3\r\n"+
+			"$4\r\nLREM\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$1\r\n1\r\n",
+		"-ERR wrong number of arguments\r\n",
+	)
+
+	// 14. Invalid count
+	sendAndVerify(
+		"*4\r\n"+
+			"$4\r\nLREM\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$3\r\nabc\r\n"+
+			"$1\r\na\r\n",
+		"-ERR value is not an integer or out of range\r\n",
+	)
+}

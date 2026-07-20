@@ -47,6 +47,7 @@ func NewDispatcher(s *store.MemoryStore) *Dispatcher {
 	d.handlers["RPOP"] = NewRPopHandler(s)
 	d.handlers["LINDEX"] = NewLIndexHandler(s)
 	d.handlers["LSET"] = NewLSetHandler(s)
+	d.handlers["LREM"] = NewLRemHandler(s)
 
 	return d
 }

@@ -543,3 +543,185 @@ func TestLSet(t *testing.T) {
 		t.Fatalf("expected list [first b y tail last_again], got %v", list)
 	}
 }
+
+func TestLRem(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	removed, err := s.LRem("missing", 1, "x")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("expected 0 removed, got %d", removed)
+	}
+
+	// 2. count > 0 (head → tail)
+	if _, err := s.RPush("list1", "a", "b", "a", "c", "a"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	removed, err = s.LRem("list1", 2, "a")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("expected 2 removed, got %d", removed)
+	}
+	listVal, _ := s.Get("list1")
+	list := listVal.Data.([]string)
+	if len(list) != 3 || list[0] != "b" || list[1] != "c" || list[2] != "a" {
+		t.Fatalf("expected list [b c a], got %v", list)
+	}
+
+	// 3. count < 0 (tail → head)
+	if _, err := s.RPush("list2", "a", "b", "a", "c", "a"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	removed, err = s.LRem("list2", -2, "a")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("expected 2 removed, got %d", removed)
+	}
+	listVal, _ = s.Get("list2")
+	list = listVal.Data.([]string)
+	if len(list) != 3 || list[0] != "a" || list[1] != "b" || list[2] != "c" {
+		t.Fatalf("expected list [a b c], got %v", list)
+	}
+
+	// 4. count == 0 (remove all)
+	if _, err := s.RPush("list3", "a", "b", "a", "c", "a"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	removed, err = s.LRem("list3", 0, "a")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if removed != 3 {
+		t.Fatalf("expected 3 removed, got %d", removed)
+	}
+	listVal, _ = s.Get("list3")
+	list = listVal.Data.([]string)
+	if len(list) != 2 || list[0] != "b" || list[1] != "c" {
+		t.Fatalf("expected list [b c], got %v", list)
+	}
+
+	// 5. No matches
+	if _, err := s.RPush("list4", "a", "b", "c"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	removed, err = s.LRem("list4", 0, "x")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("expected 0 removed, got %d", removed)
+	}
+	listVal, _ = s.Get("list4")
+	list = listVal.Data.([]string)
+	if len(list) != 3 || list[0] != "a" || list[1] != "b" || list[2] != "c" {
+		t.Fatalf("expected list unchanged [a b c], got %v", list)
+	}
+
+	// 6. WRONGTYPE
+	s.Set("stringkey", types.Value{
+		Type: types.StringType,
+		Data: "val",
+	})
+	removed, err = s.LRem("stringkey", 1, "x")
+	if !errors.Is(err, ErrWrongType) {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("expected 0 removed, got %d", removed)
+	}
+
+	// 7. Expired key
+	if _, err := s.RPush("expiredlist", "a"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	s.data["expiredlist"] = types.Value{
+		Type:      types.ListType,
+		Data:      []string{"a"},
+		ExpiresAt: time.Now().Add(-1 * time.Hour),
+	}
+	removed, err = s.LRem("expiredlist", 0, "a")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("expected 0 removed, got %d", removed)
+	}
+	_, err = s.Get("expiredlist")
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("expected key to be deleted, got %v", err)
+	}
+
+	// 8. Remove entire list
+	if _, err := s.RPush("list5", "a", "a"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	removed, err = s.LRem("list5", 0, "a")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("expected 2 removed, got %d", removed)
+	}
+	_, err = s.Get("list5")
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	}
+
+	// 9. Ordering invariant
+	if _, err := s.RPush("list6", "a", "b", "c", "d", "e"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	removed, err = s.LRem("list6", 1, "c")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("expected 1 removed, got %d", removed)
+	}
+	listVal, _ = s.Get("list6")
+	list = listVal.Data.([]string)
+	if len(list) != 4 || list[0] != "a" || list[1] != "b" || list[2] != "d" || list[3] != "e" {
+		t.Fatalf("expected list [a b d e], got %v", list)
+	}
+
+	// 10. Count limit
+	if _, err := s.RPush("list7", "a", "a", "a", "a"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	removed, err = s.LRem("list7", 2, "a")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("expected 2 removed, got %d", removed)
+	}
+	listVal, _ = s.Get("list7")
+	list = listVal.Data.([]string)
+	if len(list) != 2 || list[0] != "a" || list[1] != "a" {
+		t.Fatalf("expected list [a a], got %v", list)
+	}
+
+	// 11. Zero removals are success
+	removed, err = s.LRem("missing2", 1, "x")
+	if err != nil {
+		t.Fatalf("expected nil error on missing key, got %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("expected 0 removed on missing key, got %d", removed)
+	}
+
+	removed, err = s.LRem("list7", 1, "missing_value")
+	if err != nil {
+		t.Fatalf("expected nil error on missing value, got %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("expected 0 removed on missing value, got %d", removed)
+	}
+}
