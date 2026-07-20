@@ -725,3 +725,196 @@ func TestLRem(t *testing.T) {
 		t.Fatalf("expected 0 removed on missing value, got %d", removed)
 	}
 }
+
+func TestLInsert(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	length, err := s.LInsert("missing", true, "a", "x")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected 0 length, got %d", length)
+	}
+
+	// 2. BEFORE insertion
+	if _, err := s.RPush("list1", "a", "b", "c"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	length, err = s.LInsert("list1", true, "b", "x")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 4 {
+		t.Fatalf("expected 4 length, got %d", length)
+	}
+	listVal, _ := s.Get("list1")
+	list := listVal.Data.([]string)
+	if len(list) != 4 || list[0] != "a" || list[1] != "x" || list[2] != "b" || list[3] != "c" {
+		t.Fatalf("expected list [a x b c], got %v", list)
+	}
+
+	// 3. AFTER insertion
+	if _, err := s.RPush("list2", "a", "b", "c"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	length, err = s.LInsert("list2", false, "b", "x")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 4 {
+		t.Fatalf("expected 4 length, got %d", length)
+	}
+	listVal, _ = s.Get("list2")
+	list = listVal.Data.([]string)
+	if len(list) != 4 || list[0] != "a" || list[1] != "b" || list[2] != "x" || list[3] != "c" {
+		t.Fatalf("expected list [a b x c], got %v", list)
+	}
+
+	// 4. Pivot not found
+	if _, err := s.RPush("list3", "a", "b", "c"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	length, err = s.LInsert("list3", true, "missing", "x")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != -1 {
+		t.Fatalf("expected -1 length, got %d", length)
+	}
+	listVal, _ = s.Get("list3")
+	list = listVal.Data.([]string)
+	if len(list) != 3 || list[0] != "a" || list[1] != "b" || list[2] != "c" {
+		t.Fatalf("expected list unchanged [a b c], got %v", list)
+	}
+
+	// 5. Duplicate pivot values
+	if _, err := s.RPush("list4", "a", "b", "a", "c"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	length, err = s.LInsert("list4", true, "a", "x")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 5 {
+		t.Fatalf("expected 5 length, got %d", length)
+	}
+	listVal, _ = s.Get("list4")
+	list = listVal.Data.([]string)
+	if len(list) != 5 || list[0] != "x" || list[1] != "a" || list[2] != "b" || list[3] != "a" || list[4] != "c" {
+		t.Fatalf("expected list [x a b a c], got %v", list)
+	}
+
+	// 6. WRONGTYPE
+	s.Set("stringkey", types.Value{
+		Type: types.StringType,
+		Data: "val",
+	})
+	length, err = s.LInsert("stringkey", true, "a", "x")
+	if !errors.Is(err, ErrWrongType) {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected 0 length, got %d", length)
+	}
+
+	// 7. Expired key
+	s.Set("expired_list", types.Value{
+		Type:      types.ListType,
+		Data:      []string{"a"},
+		ExpiresAt: time.Now().Add(-1 * time.Hour),
+	})
+	length, err = s.LInsert("expired_list", true, "a", "x")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected 0 length, got %d", length)
+	}
+	_, err = s.Get("expired_list")
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	}
+
+	// 8. Ordering preserved
+	if _, err := s.RPush("list5", "a", "b", "c", "d"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	length, err = s.LInsert("list5", false, "b", "x")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 5 {
+		t.Fatalf("expected 5 length, got %d", length)
+	}
+	listVal, _ = s.Get("list5")
+	list = listVal.Data.([]string)
+	if len(list) != 5 || list[0] != "a" || list[1] != "b" || list[2] != "x" || list[3] != "c" || list[4] != "d" {
+		t.Fatalf("expected list [a b x c d], got %v", list)
+	}
+
+	// 9. Length invariant
+	if _, err := s.RPush("list6", "a", "b", "c"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	oldLength, _ := s.LLen("list6")
+	length, err = s.LInsert("list6", true, "b", "x")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != oldLength+1 {
+		t.Fatalf("expected length %d, got %d", oldLength+1, length)
+	}
+	newLength, err := s.LLen("list6")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if newLength != oldLength+1 {
+		t.Fatalf("expected length %d, got %d", oldLength+1, newLength)
+	}
+
+	// 10. BEFORE first element
+	if _, err := s.RPush("list7", "a", "b"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	length, err = s.LInsert("list7", true, "a", "x")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 3 {
+		t.Fatalf("expected 3 length, got %d", length)
+	}
+	listVal, _ = s.Get("list7")
+	list = listVal.Data.([]string)
+	if len(list) != 3 || list[0] != "x" || list[1] != "a" || list[2] != "b" {
+		t.Fatalf("expected list [x a b], got %v", list)
+	}
+
+	// 11. AFTER last element
+	if _, err := s.RPush("list8", "a", "b"); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	length, err = s.LInsert("list8", false, "b", "x")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 3 {
+		t.Fatalf("expected 3 length, got %d", length)
+	}
+	listVal, _ = s.Get("list8")
+	list = listVal.Data.([]string)
+	if len(list) != 3 || list[0] != "a" || list[1] != "b" || list[2] != "x" {
+		t.Fatalf("expected list [a b x], got %v", list)
+	}
+
+	// 12. Failed insertions leave collections unchanged
+	if _, exists := s.data["missing"]; exists {
+		t.Fatalf("missing key should not be created")
+	}
+	listVal, _ = s.Get("list3")
+	list = listVal.Data.([]string)
+	if len(list) != 3 || list[0] != "a" || list[1] != "b" || list[2] != "c" {
+		t.Fatalf("expected failed insertion to leave collection unchanged, got %v", list)
+	}
+}

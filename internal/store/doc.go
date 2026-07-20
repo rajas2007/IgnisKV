@@ -244,7 +244,7 @@
 // Lists both reuse ExpiresAt, isExpired(), and lazyExpire(). Collection
 // commands never implement separate expiration logic.
 //
-// # Current Scope (Sprint 29)
+// # Current Scope (Sprint 30)
 //
 // The Collections subsystem now supports:
 //   - LPUSH
@@ -256,11 +256,49 @@
 //   - LINDEX
 //   - LSET
 //   - LREM
+//   - LINSERT
 //
 // LREM removes elements matching a specified value.
 // It supports Redis count semantics.
 // It is a mutating command.
 // It preserves all collection invariants.
+//
+// LINSERT is a mutating list command.
+// Missing key is NOT an error.
+// Return: 0 (indicates the target list does not exist).
+//
+// Pivot not found is also NOT an error.
+// Return: -1 (indicates the list exists but no matching pivot element was found).
+//
+// Successful insertion returns the new list length.
+// The three possible successful outcomes are explicitly:
+//   - 0  -> key does not exist
+//   - -1 -> pivot not found
+//   - n  -> insertion succeeded; new list length
+//
+// Only WRONGTYPE and invalid command syntax/arguments are error conditions.
+//
+// BEFORE and AFTER are supported.
+// Position keywords are case-insensitive.
+// Invalid position keywords are errors.
+//
+// Duplicate pivot values:
+// Only the first matching pivot is used.
+// Scanning stops after the first match.
+//
+// Existing element ordering is preserved.
+// Exactly one new element is inserted.
+//
+// Persistence is handled only by the Handler.
+// The Store never performs persistence.
+//
+// LINSERT acquires the write lock immediately.
+// No lock upgrading.
+//
+// Empty collection invariant is not applicable because LINSERT never removes elements.
+//
+// Complexity:
+// Worst-case O(n) because the list is scanned until the first matching pivot.
 //
 // LSET is a mutating list update command.
 // It replaces an existing element at a specified index.
@@ -297,6 +335,7 @@
 //   - RPOP
 //   - LSET
 //   - LREM
+//   - LINSERT
 //
 // Characteristics:
 //   - acquire Lock immediately
@@ -347,6 +386,12 @@
 //   - ordering never changes
 //   - the empty collection invariant is unaffected
 //
+// LINSERT inserts exactly one new element:
+//   - existing ordering is preserved
+//   - exactly one element is added
+//   - collection length increases by one
+//   - the empty collection invariant is unaffected
+//
 // LREM removes matching elements only:
 //   - relative ordering of remaining elements is preserved
 //   - if all elements are removed, the key itself is deleted
@@ -386,17 +431,31 @@
 // The Lists subsystem deliberately distinguishes between collection creation
 // and collection mutation.
 //
-// Insertion commands (LPUSH, RPUSH) create a list if the key does not exist.
-// Mutation commands (LSET) require the key to already exist.
-// Missing keys are treated as an error rather than implicitly creating a collection.
+// Collection creation commands:
+//   - LPUSH
+//   - RPUSH
 //
-// This is an intentional architectural boundary between collection creation
-// and collection mutation.
+// Existing-list insertion command:
+//   - LINSERT
+//
+// Existing-list mutation command:
+//   - LSET
+//
+// LPUSH/RPUSH create missing lists.
+// LINSERT requires an existing list.
+// LSET requires an existing list.
+//
+// This distinction is an intentional architectural boundary.
 //
 // # Index Errors
 //
-// Unlike read-only commands, mutating commands must target an existing element.
-// Normalized out-of-range indices are errors for LSET.
+// Unlike read-only commands, mutating commands operate only on existing lists.
+//
+// LSET requires the specified index to exist.
+//
+// LINSERT requires the specified pivot element to exist.
+//
+// Missing indices and missing pivots are handled according to each command's documented semantics.
 //
 // # Empty Response Philosophy
 //
@@ -501,9 +560,15 @@
 //
 // # Persistence Rule
 //
-// Successful mutations trigger persistence.
-// Failed mutations (missing key, out-of-range index, WRONGTYPE) never trigger persistence.
 // Read-only commands never perform persistence.
+//
+// Mutating commands perform persistence according to their documented semantics.
+// Some mutating commands may complete successfully without modifying logical data
+// (for example LREM removing zero elements).
+// These successful no-op mutations still follow that command's persistence policy.
+//
+// Commands that fail because of WRONGTYPE, syntax errors, invalid arguments, or
+// other command failures never perform persistence.
 //
 // This separation continues to define the persistence architecture of the Collections subsystem.
 //
@@ -511,7 +576,7 @@
 //
 // The following concurrency model has been established for collection write operations:
 //
-// Always-write operations (SET, DEL, LPUSH, RPUSH, LPOP, RPOP, LSET) execute as:
+// Collection operations that acquire the write lock immediately (SET, DEL, LPUSH, RPUSH, LPOP, RPOP, LSET, LREM, LINSERT) execute as:
 //
 //	Lock
 //	  ↓
@@ -772,6 +837,13 @@
 //   - PERSIST
 //   - EXPIREAT
 //   - PEXPIREAT
+//   - LPUSH
+//   - RPUSH
+//   - LPOP
+//   - RPOP
+//   - LSET
+//   - LREM
+//   - LINSERT
 //
 // PEXPIREAT introduces only a new client input format. PTTL introduces only
 // a new observation unit. Internally the expiration subsystem remains

@@ -1938,3 +1938,185 @@ func TestIntegrationLRem(t *testing.T) {
 		"-ERR value is not an integer or out of range\r\n",
 	)
 }
+
+func TestIntegrationLInsert(t *testing.T) {
+	// Arrange
+	s := store.NewMemoryStore()
+	dispatcher := commands.NewDispatcher(s)
+	srv := server.New(dispatcher)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to find free port: %v", err)
+	}
+	address := l.Addr().String()
+	l.Close()
+
+	go func() {
+		_ = srv.Start(address)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 1024)
+	sendAndVerify := func(cmd string, expected string) string {
+		if _, err := conn.Write([]byte(cmd)); err != nil {
+			t.Fatalf("Write error: %v", err)
+		}
+		n, err := conn.Read(buf)
+		if err != nil {
+			t.Fatalf("Read error: %v", err)
+		}
+		response := string(buf[:n])
+		if expected != "" && response != expected {
+			t.Fatalf("Expected %q, got %q", expected, response)
+		}
+		return response
+	}
+
+	// 1. RPUSH mylist a b c
+	sendAndVerify(
+		"*5\r\n"+
+			"$5\r\nRPUSH\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$1\r\na\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\nc\r\n",
+		":3\r\n",
+	)
+
+	// 2. LINSERT BEFORE mylist b x
+	sendAndVerify(
+		"*5\r\n"+
+			"$7\r\nLINSERT\r\n"+
+			"$6\r\nBEFORE\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\nx\r\n",
+		":4\r\n",
+	)
+
+	// 3. LRANGE mylist 0 -1
+	sendAndVerify(
+		"*4\r\n"+
+			"$6\r\nLRANGE\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$1\r\n0\r\n"+
+			"$2\r\n-1\r\n",
+		"*4\r\n"+
+			"$1\r\na\r\n"+
+			"$1\r\nx\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\nc\r\n",
+	)
+
+	// 4. LINSERT AFTER mylist b y
+	sendAndVerify(
+		"*5\r\n"+
+			"$7\r\nLINSERT\r\n"+
+			"$5\r\nAFTER\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\ny\r\n",
+		":5\r\n",
+	)
+
+	// 5. LRANGE mylist 0 -1
+	sendAndVerify(
+		"*4\r\n"+
+			"$6\r\nLRANGE\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$1\r\n0\r\n"+
+			"$2\r\n-1\r\n",
+		"*5\r\n"+
+			"$1\r\na\r\n"+
+			"$1\r\nx\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\ny\r\n"+
+			"$1\r\nc\r\n",
+	)
+
+	// 6. LINSERT BEFORE missing pivot value
+	sendAndVerify(
+		"*5\r\n"+
+			"$7\r\nLINSERT\r\n"+
+			"$6\r\nBEFORE\r\n"+
+			"$7\r\nmissing\r\n"+
+			"$5\r\npivot\r\n"+
+			"$5\r\nvalue\r\n",
+		":0\r\n",
+	)
+
+	// 7. LINSERT BEFORE mylist missing value
+	sendAndVerify(
+		"*5\r\n"+
+			"$7\r\nLINSERT\r\n"+
+			"$6\r\nBEFORE\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$7\r\nmissing\r\n"+
+			"$5\r\nvalue\r\n",
+		":-1\r\n",
+	)
+
+	// 8. SET stringkey value
+	sendAndVerify(
+		"*3\r\n"+
+			"$3\r\nSET\r\n"+
+			"$9\r\nstringkey\r\n"+
+			"$5\r\nvalue\r\n",
+		"+OK\r\n",
+	)
+
+	// 9. LINSERT BEFORE stringkey pivot value
+	sendAndVerify(
+		"*5\r\n"+
+			"$7\r\nLINSERT\r\n"+
+			"$6\r\nBEFORE\r\n"+
+			"$9\r\nstringkey\r\n"+
+			"$5\r\npivot\r\n"+
+			"$5\r\nvalue\r\n",
+		"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+	)
+
+	// 10. Invalid position
+	sendAndVerify(
+		"*5\r\n"+
+			"$7\r\nLINSERT\r\n"+
+			"$7\r\nBETWEEN\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$5\r\npivot\r\n"+
+			"$5\r\nvalue\r\n",
+		"-ERR syntax error\r\n",
+	)
+
+	// 11. Missing arguments
+	sendAndVerify(
+		"*4\r\n"+
+			"$7\r\nLINSERT\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\nx\r\n",
+		"-ERR wrong number of arguments\r\n",
+	)
+
+	// 12. Verify the final list
+	sendAndVerify(
+		"*4\r\n"+
+			"$6\r\nLRANGE\r\n"+
+			"$6\r\nmylist\r\n"+
+			"$1\r\n0\r\n"+
+			"$2\r\n-1\r\n",
+		"*5\r\n"+
+			"$1\r\na\r\n"+
+			"$1\r\nx\r\n"+
+			"$1\r\nb\r\n"+
+			"$1\r\ny\r\n"+
+			"$1\r\nc\r\n",
+	)
+}

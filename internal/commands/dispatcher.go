@@ -29,6 +29,13 @@ func NewDispatcher(s *store.MemoryStore) *Dispatcher {
 	d.handlers["RPUSH"] = NewRPushHandler(s)
 	d.handlers["LLEN"] = NewLLenHandler(s)
 	d.handlers["LRANGE"] = NewLRangeHandler(s)
+	d.handlers["LPOP"] = NewLPopHandler(s)
+	d.handlers["RPOP"] = NewRPopHandler(s)
+	d.handlers["LINDEX"] = NewLIndexHandler(s)
+	d.handlers["LSET"] = NewLSetHandler(s)
+	d.handlers["LREM"] = NewLRemHandler(s)
+	d.handlers["LINSERT"] = NewLInsertHandler(s)
+
 	d.handlers["GET"] = NewGetHandler(s)
 	d.handlers["DEL"] = NewDelHandler(s)
 	d.handlers["TTL"] = NewTTLHandler(s)
@@ -43,11 +50,6 @@ func NewDispatcher(s *store.MemoryStore) *Dispatcher {
 	d.handlers["SAVE"] = NewSaveHandler(s)
 	d.handlers["HELP"] = NewHelpHandler()
 	d.handlers["QUIT"] = NewQuitHandler()
-	d.handlers["LPOP"] = NewLPopHandler(s)
-	d.handlers["RPOP"] = NewRPopHandler(s)
-	d.handlers["LINDEX"] = NewLIndexHandler(s)
-	d.handlers["LSET"] = NewLSetHandler(s)
-	d.handlers["LREM"] = NewLRemHandler(s)
 
 	return d
 }
