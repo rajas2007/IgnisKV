@@ -88,3 +88,34 @@ func (s *MemoryStore) HGet(key, field string) (string, error) {
 
 	return val, nil
 }
+
+// HExists reports whether the specified field exists in the hash stored at key.
+// It returns false and ErrKeyNotFound if the key does not exist.
+// It returns false and ErrWrongType if the key exists but is not a hash.
+// It returns false and nil if the key exists but the field does not.
+func (s *MemoryStore) HExists(key, field string) (bool, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+
+	if !ok {
+		s.mu.RUnlock()
+		return false, ErrKeyNotFound
+	}
+
+	if isExpired(v) {
+		s.mu.RUnlock()
+		s.lazyExpire(key)
+		return false, ErrKeyNotFound
+	}
+
+	if v.Type != types.HashType {
+		s.mu.RUnlock()
+		return false, ErrWrongType
+	}
+
+	hashMap := v.Data.(map[string]string)
+	_, exists := hashMap[field]
+	s.mu.RUnlock()
+
+	return exists, nil
+}

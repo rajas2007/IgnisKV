@@ -189,3 +189,82 @@ func TestHGet(t *testing.T) {
 		t.Fatalf("expected key to be physically deleted after lazy expiration")
 	}
 }
+
+func TestHExists(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	exists, err := s.HExists("missing_key", "field1")
+	if err != ErrKeyNotFound {
+		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	}
+	if exists {
+		t.Fatalf("expected exists to be false")
+	}
+
+	// Setup hash
+	s.HSet("hash1", []string{"field1", "value1", "empty_val", "", "", "empty_field"})
+
+	// 2. Existing field
+	exists, err = s.HExists("hash1", "field1")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected exists to be true")
+	}
+
+	// 3. Missing field
+	exists, err = s.HExists("hash1", "missing_field")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if exists {
+		t.Fatalf("expected exists to be false")
+	}
+
+	// 4. Empty value
+	exists, err = s.HExists("hash1", "empty_val")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected exists to be true")
+	}
+
+	// 5. Empty field name
+	exists, err = s.HExists("hash1", "")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected exists to be true")
+	}
+
+	// 6. Wrong type
+	s.Set("string_key", types.Value{Type: types.StringType, Data: "val"})
+	exists, err = s.HExists("string_key", "field1")
+	if err != ErrWrongType {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+	if exists {
+		t.Fatalf("expected exists to be false")
+	}
+
+	// 7. Lazy expiration
+	s.Set("hash_expired", types.Value{
+		Type:      types.HashType,
+		Data:      map[string]string{"f": "v"},
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	})
+	exists, err = s.HExists("hash_expired", "f")
+	if err != ErrKeyNotFound {
+		t.Fatalf("expected ErrKeyNotFound for expired key, got %v", err)
+	}
+	if exists {
+		t.Fatalf("expected exists to be false")
+	}
+	if s.Exists("hash_expired") {
+		t.Fatalf("expected key to be physically deleted after lazy expiration")
+	}
+}
