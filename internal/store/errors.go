@@ -22,3 +22,7 @@ var ErrInvalidTimestamp = errors.New("invalid timestamp")
 // ErrWrongType is returned when a command is executed against a key holding
 // a value of a different DataType than the command expects.
 var ErrWrongType = errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+
+// ErrFieldNotFound is returned by hash operations when the requested field does
+// not exist in the hash.
+var ErrFieldNotFound = errors.New("field not found")

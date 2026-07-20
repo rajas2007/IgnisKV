@@ -53,3 +53,38 @@ func (s *MemoryStore) HSet(key string, pairs []string) (int, error) {
 
 	return added, nil
 }
+
+// HGet returns the value associated with field in the hash stored at key.
+// It returns ErrKeyNotFound if the key does not exist.
+// It returns ErrWrongType if the key exists but is not a hash.
+// It returns ErrFieldNotFound if the key exists but the field does not.
+func (s *MemoryStore) HGet(key, field string) (string, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+
+	if !ok {
+		s.mu.RUnlock()
+		return "", ErrKeyNotFound
+	}
+
+	if isExpired(v) {
+		s.mu.RUnlock()
+		s.lazyExpire(key)
+		return "", ErrKeyNotFound
+	}
+
+	if v.Type != types.HashType {
+		s.mu.RUnlock()
+		return "", ErrWrongType
+	}
+
+	hashMap := v.Data.(map[string]string)
+	val, ok := hashMap[field]
+	s.mu.RUnlock()
+
+	if !ok {
+		return "", ErrFieldNotFound
+	}
+
+	return val, nil
+}

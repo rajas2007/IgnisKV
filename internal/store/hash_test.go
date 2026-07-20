@@ -122,3 +122,70 @@ func TestHSet(t *testing.T) {
 		t.Fatalf("expected zero ExpiresAt for new hash replacing expired one")
 	}
 }
+
+func TestHGet(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	_, err := s.HGet("missing_key", "field1")
+	if err != ErrKeyNotFound {
+		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	}
+
+	// Setup hash
+	s.HSet("hash1", []string{"field1", "value1", "empty_val", "", "", "empty_field"})
+
+	// 2. Existing field
+	val, err := s.HGet("hash1", "field1")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if val != "value1" {
+		t.Fatalf("expected value1, got %v", val)
+	}
+
+	// 3. Missing field
+	_, err = s.HGet("hash1", "missing_field")
+	if err != ErrFieldNotFound {
+		t.Fatalf("expected ErrFieldNotFound, got %v", err)
+	}
+
+	// 4. Empty value
+	val, err = s.HGet("hash1", "empty_val")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if val != "" {
+		t.Fatalf("expected empty value, got %v", val)
+	}
+
+	// 5. Empty field name
+	val, err = s.HGet("hash1", "")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if val != "empty_field" {
+		t.Fatalf("expected empty_field, got %v", val)
+	}
+
+	// 6. Wrong type
+	s.Set("string_key", types.Value{Type: types.StringType, Data: "val"})
+	_, err = s.HGet("string_key", "field1")
+	if err != ErrWrongType {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+
+	// 7. Lazy expiration
+	s.Set("hash_expired", types.Value{
+		Type:      types.HashType,
+		Data:      map[string]string{"f": "v"},
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	})
+	_, err = s.HGet("hash_expired", "f")
+	if err != ErrKeyNotFound {
+		t.Fatalf("expected ErrKeyNotFound for expired key, got %v", err)
+	}
+	if s.Exists("hash_expired") {
+		t.Fatalf("expected key to be physically deleted after lazy expiration")
+	}
+}
