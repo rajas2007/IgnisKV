@@ -39,6 +39,7 @@ func NewDispatcher(s *store.MemoryStore) *Dispatcher {
 	d.handlers["HGET"] = NewHGetHandler(s)
 	d.handlers["HEXISTS"] = NewHExistsHandler(s)
 	d.handlers["HDEL"] = NewHDelHandler(s)
+	d.handlers["HLEN"] = NewHLenHandler(s)
 
 	d.handlers["GET"] = NewGetHandler(s)
 	d.handlers["DEL"] = NewDelHandler(s)

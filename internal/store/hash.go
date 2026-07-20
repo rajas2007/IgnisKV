@@ -168,3 +168,32 @@ func (s *MemoryStore) HDel(key string, fields []string) (int, error) {
 
 	return deleted, nil
 }
+
+// HLen returns the number of fields contained in the hash stored at key.
+// If the key does not exist, it returns 0.
+// If the key exists but is not a hash, it returns ErrWrongType.
+func (s *MemoryStore) HLen(key string) (int, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+	if !ok {
+		s.mu.RUnlock()
+		return 0, nil
+	}
+
+	if isExpired(v) {
+		s.mu.RUnlock()
+		s.lazyExpire(key)
+		return 0, nil
+	}
+
+	if v.Type != types.HashType {
+		s.mu.RUnlock()
+		return 0, ErrWrongType
+	}
+
+	hashMap := v.Data.(map[string]string)
+	length := len(hashMap)
+	s.mu.RUnlock()
+
+	return length, nil
+}

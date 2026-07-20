@@ -376,3 +376,70 @@ func TestHDel(t *testing.T) {
 		t.Fatalf("expected key to be physically deleted after lazy expiration")
 	}
 }
+
+func TestHLen(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	length, err := s.HLen("missing_key")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected 0 length, got %d", length)
+	}
+
+	// 2. Wrong type
+	s.Set("string_key", types.Value{Type: types.StringType, Data: "val"})
+	_, err = s.HLen("string_key")
+	if err != ErrWrongType {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+
+	// 3. Single field
+	s.HSet("hash1", []string{"f1", "v1"})
+	length, err = s.HLen("hash1")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 1 {
+		t.Fatalf("expected 1 length, got %d", length)
+	}
+
+	// 4. Multiple fields
+	s.HSet("hash2", []string{"f1", "v1", "f2", "v2", "f3", "v3"})
+	length, err = s.HLen("hash2")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 3 {
+		t.Fatalf("expected 3 length, got %d", length)
+	}
+
+	// 5. Empty hash (manually inserted since HSET/HDEL maintain invariant)
+	s.Set("hash_empty", types.Value{Type: types.HashType, Data: make(map[string]string)})
+	length, err = s.HLen("hash_empty")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected 0 length for empty hash, got %d", length)
+	}
+
+	// 6. Lazy expiration
+	s.Set("hash_expired", types.Value{
+		Type:      types.HashType,
+		Data:      map[string]string{"f": "v"},
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	})
+	length, err = s.HLen("hash_expired")
+	if err != nil {
+		t.Fatalf("expected nil error for expired key, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected 0 length, got %d", length)
+	}
+	if s.Exists("hash_expired") {
+		t.Fatalf("expected key to be physically deleted after lazy expiration")
+	}
+}
