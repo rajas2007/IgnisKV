@@ -244,7 +244,7 @@
 // Lists both reuse ExpiresAt, isExpired(), and lazyExpire(). Collection
 // commands never implement separate expiration logic.
 //
-// # Current Scope (Sprint 25)
+// # Current Scope (Sprint 29)
 //
 // The Collections subsystem now supports:
 //   - LPUSH
@@ -253,6 +253,26 @@
 //   - LRANGE
 //   - LPOP
 //   - RPOP
+//   - LINDEX
+//   - LSET
+//   - LREM
+//
+// LREM removes elements matching a specified value.
+// It supports Redis count semantics.
+// It is a mutating command.
+// It preserves all collection invariants.
+//
+// LSET is a mutating list update command.
+// It replaces an existing element at a specified index.
+// It supports both positive and negative indices.
+// It never changes list length.
+// It preserves all collection invariants.
+//
+// LINDEX is a read-only list lookup command.
+// It returns a single element by index.
+// It supports both positive and negative indices.
+// It never mutates collection state.
+// It never performs persistence.
 //
 // LPOP is the first destructive collection operation.
 // It removes and returns the left-most element.
@@ -275,6 +295,8 @@
 //   - RPUSH
 //   - LPOP
 //   - RPOP
+//   - LSET
+//   - LREM
 //
 // Characteristics:
 //   - acquire Lock immediately
@@ -285,6 +307,7 @@
 // Read-only commands
 //   - LLEN
 //   - LRANGE
+//   - LINDEX
 //
 // Characteristics:
 //   - begin with RLock
@@ -300,6 +323,7 @@
 //
 // Point readers
 //   - LLEN
+//   - LINDEX
 //
 // Range readers
 //   - LRANGE
@@ -317,7 +341,20 @@
 //
 // # Collection Invariants
 //
-// Collections never exist in an empty state.
+// LINDEX never changes collection state.
+// LSET replaces an existing element only:
+//   - list length never changes
+//   - ordering never changes
+//   - the empty collection invariant is unaffected
+//
+// LREM removes matching elements only:
+//   - relative ordering of remaining elements is preserved
+//   - if all elements are removed, the key itself is deleted
+//   - empty collections are never retained in the store
+//
+// Collections continue to satisfy:
+//   - empty collections never exist
+//   - LPOP/RPOP enforce deletion after the final removal
 //
 // When the final element is removed:
 //   - delete the key
@@ -335,6 +372,43 @@
 //
 // It never means:
 //   - an existing empty list
+//
+// # Index Semantics
+//
+// LINDEX and LSET follow the same index normalization philosophy established for LRANGE:
+//   - positive indices begin at zero
+//   - negative indices count backward from the tail
+//   - -1 is the final element
+//   - -2 is the penultimate element
+//
+// # Missing Key Semantics
+//
+// The Lists subsystem deliberately distinguishes between collection creation
+// and collection mutation.
+//
+// Insertion commands (LPUSH, RPUSH) create a list if the key does not exist.
+// Mutation commands (LSET) require the key to already exist.
+// Missing keys are treated as an error rather than implicitly creating a collection.
+//
+// This is an intentional architectural boundary between collection creation
+// and collection mutation.
+//
+// # Index Errors
+//
+// Unlike read-only commands, mutating commands must target an existing element.
+// Normalized out-of-range indices are errors for LSET.
+//
+// # Empty Response Philosophy
+//
+// Read-only collection commands treat absence and out-of-bounds as valid empty results.
+//
+// Specifically:
+//   - missing key → Nil
+//   - expired key → Nil
+//   - normalized index outside the collection → Nil
+//
+// These are valid outcomes, not error conditions.
+// WRONGTYPE remains the only type-related error.
 //
 // # Range Normalization
 //
@@ -398,10 +472,38 @@
 //   - missing or expired keys return Nil
 //   - WRONGTYPE is returned for non-list keys
 //
+// # LREM Count Semantics
+//
+// LREM implements Redis-compatible count behavior:
+//   - count > 0 removes matches from head to tail
+//   - count < 0 removes matches from tail to head
+//   - count == 0 removes every matching element
+//
+// While traversal direction changes based on count, the relative ordering of
+// the remaining elements is always preserved.
+//
+// # Success Semantics
+//
+// LREM returns (removedCount, nil) for every successful execution.
+// A removed count of zero is a valid success outcome.
+// This includes:
+//   - missing key
+//   - no matching elements
+//
+// Neither condition is considered an error.
+//
+// # Error Semantics
+//
+// The only error condition for LREM is:
+//   - WRONGTYPE
+//
+// Missing collections are treated as successful no-op mutations returning zero removals.
+//
 // # Persistence Rule
 //
-// Mutating commands persist state only after a successful modification.
-// Read-only commands never trigger persistence.
+// Successful mutations trigger persistence.
+// Failed mutations (missing key, out-of-range index, WRONGTYPE) never trigger persistence.
+// Read-only commands never perform persistence.
 //
 // This separation continues to define the persistence architecture of the Collections subsystem.
 //
@@ -409,7 +511,7 @@
 //
 // The following concurrency model has been established for collection write operations:
 //
-// Always-write operations (SET, DEL, LPUSH, RPUSH, LPOP, RPOP) execute as:
+// Always-write operations (SET, DEL, LPUSH, RPUSH, LPOP, RPOP, LSET) execute as:
 //
 //	Lock
 //	  ↓

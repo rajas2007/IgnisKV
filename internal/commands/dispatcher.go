@@ -45,6 +45,8 @@ func NewDispatcher(s *store.MemoryStore) *Dispatcher {
 	d.handlers["QUIT"] = NewQuitHandler()
 	d.handlers["LPOP"] = NewLPopHandler(s)
 	d.handlers["RPOP"] = NewRPopHandler(s)
+	d.handlers["LINDEX"] = NewLIndexHandler(s)
+	d.handlers["LSET"] = NewLSetHandler(s)
 
 	return d
 }
