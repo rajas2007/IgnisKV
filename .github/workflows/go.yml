@@ -34,6 +34,9 @@ jobs:
             exit 1
           fi
 
+      - name: Go Vet
+        run: go vet ./...
+
       - name: Run unit tests
         run: go test ./...
 
