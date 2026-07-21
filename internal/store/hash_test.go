@@ -533,3 +533,110 @@ func sliceToMap(s []string) map[string]string {
 	}
 	return m
 }
+
+func TestHMGet(t *testing.T) {
+	s := NewMemoryStore()
+
+	// Setup hash: name=Rajas, age=19, empty_val=""
+	s.HSet("hash1", []string{"name", "Rajas", "age", "19", "empty_val", "", "", "empty_field"})
+
+	// 1. All fields present
+	result, err := s.HMGet("hash1", []string{"name", "age"})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+	if result[0] != "Rajas" {
+		t.Fatalf("expected Rajas, got %v", result[0])
+	}
+	if result[1] != "19" {
+		t.Fatalf("expected 19, got %v", result[1])
+	}
+
+	// 2. Mixed present/missing fields - order preserved
+	result, err = s.HMGet("hash1", []string{"name", "city", "age"})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(result) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(result))
+	}
+	if result[0] != "Rajas" {
+		t.Fatalf("expected Rajas at position 0, got %v", result[0])
+	}
+	if result[1] != nil {
+		t.Fatalf("expected nil at position 1, got %v", result[1])
+	}
+	if result[2] != "19" {
+		t.Fatalf("expected 19 at position 2, got %v", result[2])
+	}
+
+	// 3. Missing key - all nil
+	result, err = s.HMGet("missing_key", []string{"f1", "f2", "f3"})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(result) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(result))
+	}
+	for i, v := range result {
+		if v != nil {
+			t.Fatalf("expected nil at position %d, got %v", i, v)
+		}
+	}
+
+	// 4. Wrong type
+	s.Set("string_key", types.Value{Type: types.StringType, Data: "val"})
+	_, err = s.HMGet("string_key", []string{"f1"})
+	if err != ErrWrongType {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+
+	// 5. Empty string value
+	result, err = s.HMGet("hash1", []string{"empty_val"})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(result))
+	}
+	if result[0] != "" {
+		t.Fatalf("expected empty string, got %v", result[0])
+	}
+
+	// 6. Empty field name
+	result, err = s.HMGet("hash1", []string{""})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(result))
+	}
+	if result[0] != "empty_field" {
+		t.Fatalf("expected empty_field, got %v", result[0])
+	}
+
+	// 7. Lazy expiration - all nil
+	s.Set("hash_expired", types.Value{
+		Type:      types.HashType,
+		Data:      map[string]string{"f": "v"},
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	})
+	result, err = s.HMGet("hash_expired", []string{"f", "missing"})
+	if err != nil {
+		t.Fatalf("expected nil error for expired key, got %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+	for i, v := range result {
+		if v != nil {
+			t.Fatalf("expected nil at position %d, got %v", i, v)
+		}
+	}
+	if s.Exists("hash_expired") {
+		t.Fatalf("expected key to be physically deleted after lazy expiration")
+	}
+}

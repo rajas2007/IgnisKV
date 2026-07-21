@@ -230,3 +230,43 @@ func (s *MemoryStore) HGetAll(key string) ([]string, error) {
 
 	return result, nil
 }
+
+// HMGet returns the values associated with the specified fields in the hash
+// stored at key. For every field that does not exist in the hash, nil is
+// returned in that position. If the key does not exist, a slice of nil values
+// is returned whose length equals len(fields).
+// If the key exists but is not a hash, it returns ErrWrongType.
+// The returned slice preserves the order of the requested fields exactly.
+func (s *MemoryStore) HMGet(key string, fields []string) ([]any, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+	if !ok {
+		s.mu.RUnlock()
+		result := make([]any, len(fields))
+		return result, nil
+	}
+
+	if isExpired(v) {
+		s.mu.RUnlock()
+		s.lazyExpire(key)
+		result := make([]any, len(fields))
+		return result, nil
+	}
+
+	if v.Type != types.HashType {
+		s.mu.RUnlock()
+		return nil, ErrWrongType
+	}
+
+	hashMap := v.Data.(map[string]string)
+	result := make([]any, len(fields))
+	for i, field := range fields {
+		if val, exists := hashMap[field]; exists {
+			result[i] = val
+		}
+		// Missing fields remain nil (zero value of any).
+	}
+	s.mu.RUnlock()
+
+	return result, nil
+}
