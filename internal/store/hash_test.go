@@ -1,6 +1,7 @@
 package store
 
 import (
+	"sort"
 	"testing"
 	"time"
 
@@ -635,6 +636,83 @@ func TestHMGet(t *testing.T) {
 		if v != nil {
 			t.Fatalf("expected nil at position %d, got %v", i, v)
 		}
+	}
+	if s.Exists("hash_expired") {
+		t.Fatalf("expected key to be physically deleted after lazy expiration")
+	}
+}
+
+func TestHKeys(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	keys, err := s.HKeys("missing_key")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected empty slice, got %v", keys)
+	}
+
+	// 2. Wrong type
+	s.Set("string_key", types.Value{Type: types.StringType, Data: "val"})
+	_, err = s.HKeys("string_key")
+	if err != ErrWrongType {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+
+	// 3. Single-field hash
+	s.HSet("hash1", []string{"f1", "v1"})
+	keys, err = s.HKeys("hash1")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+	if keys[0] != "f1" {
+		t.Fatalf("expected f1, got %s", keys[0])
+	}
+
+	// 4. Multiple fields - sort before comparing
+	s.HSet("hash2", []string{"f1", "v1", "f2", "v2", "f3", "v3"})
+	keys, err = s.HKeys("hash2")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(keys) != 3 {
+		t.Fatalf("expected 3 keys, got %d", len(keys))
+	}
+	sort.Strings(keys)
+	expected := []string{"f1", "f2", "f3"}
+	for i, k := range keys {
+		if k != expected[i] {
+			t.Fatalf("expected %s at position %d, got %s", expected[i], i, k)
+		}
+	}
+
+	// 5. Empty hash (manually constructed)
+	s.Set("hash_empty", types.Value{Type: types.HashType, Data: make(map[string]string)})
+	keys, err = s.HKeys("hash_empty")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected empty slice for empty hash, got %v", keys)
+	}
+
+	// 6. Lazy expiration
+	s.Set("hash_expired", types.Value{
+		Type:      types.HashType,
+		Data:      map[string]string{"f": "v"},
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	})
+	keys, err = s.HKeys("hash_expired")
+	if err != nil {
+		t.Fatalf("expected nil error for expired key, got %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected empty slice, got %v", keys)
 	}
 	if s.Exists("hash_expired") {
 		t.Fatalf("expected key to be physically deleted after lazy expiration")

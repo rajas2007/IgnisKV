@@ -270,3 +270,36 @@ func (s *MemoryStore) HMGet(key string, fields []string) ([]any, error) {
 
 	return result, nil
 }
+
+// HKeys returns all field names in the hash stored at key.
+// If the key does not exist, it returns an empty slice.
+// If the key exists but is not a hash, it returns ErrWrongType.
+// The order of the returned field names is unspecified.
+func (s *MemoryStore) HKeys(key string) ([]string, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+	if !ok {
+		s.mu.RUnlock()
+		return []string{}, nil
+	}
+
+	if isExpired(v) {
+		s.mu.RUnlock()
+		s.lazyExpire(key)
+		return []string{}, nil
+	}
+
+	if v.Type != types.HashType {
+		s.mu.RUnlock()
+		return nil, ErrWrongType
+	}
+
+	hashMap := v.Data.(map[string]string)
+	keys := make([]string, 0, len(hashMap))
+	for field := range hashMap {
+		keys = append(keys, field)
+	}
+	s.mu.RUnlock()
+
+	return keys, nil
+}
