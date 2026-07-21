@@ -443,3 +443,93 @@ func TestHLen(t *testing.T) {
 		t.Fatalf("expected key to be physically deleted after lazy expiration")
 	}
 }
+
+func TestHGetAll(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	result, err := s.HGetAll("missing_key")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected empty slice, got %v", result)
+	}
+
+	// 2. Wrong type
+	s.Set("string_key", types.Value{Type: types.StringType, Data: "val"})
+	_, err = s.HGetAll("string_key")
+	if err != ErrWrongType {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+
+	// 3. Single-field hash
+	s.HSet("hash1", []string{"f1", "v1"})
+	result, err = s.HGetAll("hash1")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 elements, got %d", len(result))
+	}
+	got := sliceToMap(result)
+	if got["f1"] != "v1" {
+		t.Fatalf("expected f1=v1, got f1=%s", got["f1"])
+	}
+
+	// 4. Multiple fields - verify alternating field/value layout
+	s.HSet("hash2", []string{"f1", "v1", "f2", "v2", "f3", "v3"})
+	result, err = s.HGetAll("hash2")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(result) != 6 {
+		t.Fatalf("expected 6 elements, got %d", len(result))
+	}
+	if len(result)%2 != 0 {
+		t.Fatalf("expected even number of elements, got %d", len(result))
+	}
+	got = sliceToMap(result)
+	expected := map[string]string{"f1": "v1", "f2": "v2", "f3": "v3"}
+	for k, v := range expected {
+		if got[k] != v {
+			t.Fatalf("expected %s=%s, got %s=%s", k, v, k, got[k])
+		}
+	}
+
+	// 5. Empty hash (manually constructed)
+	s.Set("hash_empty", types.Value{Type: types.HashType, Data: make(map[string]string)})
+	result, err = s.HGetAll("hash_empty")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected empty slice for empty hash, got %v", result)
+	}
+
+	// 6. Lazy expiration
+	s.Set("hash_expired", types.Value{
+		Type:      types.HashType,
+		Data:      map[string]string{"f": "v"},
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	})
+	result, err = s.HGetAll("hash_expired")
+	if err != nil {
+		t.Fatalf("expected nil error for expired key, got %v", err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected empty slice, got %v", result)
+	}
+	if s.Exists("hash_expired") {
+		t.Fatalf("expected key to be physically deleted after lazy expiration")
+	}
+}
+
+// sliceToMap converts a flat alternating field/value slice into a map.
+func sliceToMap(s []string) map[string]string {
+	m := make(map[string]string)
+	for i := 0; i < len(s); i += 2 {
+		m[s[i]] = s[i+1]
+	}
+	return m
+}

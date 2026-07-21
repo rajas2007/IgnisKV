@@ -197,3 +197,36 @@ func (s *MemoryStore) HLen(key string) (int, error) {
 
 	return length, nil
 }
+
+// HGetAll returns all fields and values of the hash stored at key as a flat
+// slice of alternating field/value pairs: [field1, value1, field2, value2, ...].
+// If the key does not exist, it returns an empty slice.
+// If the key exists but is not a hash, it returns ErrWrongType.
+func (s *MemoryStore) HGetAll(key string) ([]string, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+	if !ok {
+		s.mu.RUnlock()
+		return []string{}, nil
+	}
+
+	if isExpired(v) {
+		s.mu.RUnlock()
+		s.lazyExpire(key)
+		return []string{}, nil
+	}
+
+	if v.Type != types.HashType {
+		s.mu.RUnlock()
+		return nil, ErrWrongType
+	}
+
+	hashMap := v.Data.(map[string]string)
+	result := make([]string, 0, len(hashMap)*2)
+	for field, value := range hashMap {
+		result = append(result, field, value)
+	}
+	s.mu.RUnlock()
+
+	return result, nil
+}
