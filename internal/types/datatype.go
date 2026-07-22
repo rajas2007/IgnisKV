@@ -17,7 +17,9 @@ const (
 	// HashType represents a Redis-compatible hash map stored as map[string]string.
 	HashType
 
+	// SetType represents a Redis-compatible unordered string collection stored as map[string]struct{}.
+	SetType
+
 	// Planned future data types for later milestones:
-	// - SetType
 	// - SortedSetType
 )

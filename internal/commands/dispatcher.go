@@ -49,6 +49,10 @@ func NewDispatcher(s *store.MemoryStore) *Dispatcher {
 	d.handlers["HINCRBY"] = NewHIncrByHandler(s)
 	d.handlers["HINCRBYFLOAT"] = NewHIncrByFloatHandler(s)
 
+	d.handlers["SADD"] = NewSAddHandler(s)
+	d.handlers["SREM"] = NewSRemHandler(s)
+	d.handlers["SISMEMBER"] = NewSIsMemberHandler(s)
+
 	d.handlers["GET"] = NewGetHandler(s)
 	d.handlers["DEL"] = NewDelHandler(s)
 	d.handlers["TTL"] = NewTTLHandler(s)
