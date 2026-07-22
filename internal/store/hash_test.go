@@ -718,3 +718,97 @@ func TestHKeys(t *testing.T) {
 		t.Fatalf("expected key to be physically deleted after lazy expiration")
 	}
 }
+
+func TestHVals(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	vals, err := s.HVals("missing_key")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(vals) != 0 {
+		t.Fatalf("expected empty slice, got %v", vals)
+	}
+
+	// 2. Wrong type
+	s.Set("string_key", types.Value{Type: types.StringType, Data: "val"})
+	_, err = s.HVals("string_key")
+	if err != ErrWrongType {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+
+	// 3. Single-value hash
+	s.HSet("hash1", []string{"f1", "v1"})
+	vals, err = s.HVals("hash1")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(vals) != 1 {
+		t.Fatalf("expected 1 value, got %d", len(vals))
+	}
+	if vals[0] != "v1" {
+		t.Fatalf("expected v1, got %s", vals[0])
+	}
+
+	// 4. Multiple values - sort before comparing
+	s.HSet("hash2", []string{"f1", "v1", "f2", "v2", "f3", "v3"})
+	vals, err = s.HVals("hash2")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(vals) != 3 {
+		t.Fatalf("expected 3 values, got %d", len(vals))
+	}
+	sort.Strings(vals)
+	expected := []string{"v1", "v2", "v3"}
+	for i, v := range vals {
+		if v != expected[i] {
+			t.Fatalf("expected %s at position %d, got %s", expected[i], i, v)
+		}
+	}
+
+	// 5. Duplicate values
+	s.HSet("hash_dup", []string{"f1", "val", "f2", "val", "f3", "other"})
+	vals, err = s.HVals("hash_dup")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(vals) != 3 {
+		t.Fatalf("expected 3 values, got %d", len(vals))
+	}
+	sort.Strings(vals)
+	expectedDup := []string{"other", "val", "val"}
+	for i, v := range vals {
+		if v != expectedDup[i] {
+			t.Fatalf("expected %s at position %d, got %s", expectedDup[i], i, v)
+		}
+	}
+
+	// 6. Empty hash (manually constructed)
+	s.Set("hash_empty", types.Value{Type: types.HashType, Data: make(map[string]string)})
+	vals, err = s.HVals("hash_empty")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(vals) != 0 {
+		t.Fatalf("expected empty slice for empty hash, got %v", vals)
+	}
+
+	// 7. Lazy expiration
+	s.Set("hash_expired", types.Value{
+		Type:      types.HashType,
+		Data:      map[string]string{"f": "v"},
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	})
+	vals, err = s.HVals("hash_expired")
+	if err != nil {
+		t.Fatalf("expected nil error for expired key, got %v", err)
+	}
+	if len(vals) != 0 {
+		t.Fatalf("expected empty slice, got %v", vals)
+	}
+	if s.Exists("hash_expired") {
+		t.Fatalf("expected key to be physically deleted after lazy expiration")
+	}
+}

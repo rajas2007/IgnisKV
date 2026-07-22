@@ -303,3 +303,36 @@ func (s *MemoryStore) HKeys(key string) ([]string, error) {
 
 	return keys, nil
 }
+
+// HVals returns all values in the hash stored at key.
+// If the key does not exist, it returns an empty slice.
+// If the key exists but is not a hash, it returns ErrWrongType.
+// The order of the returned values is unspecified.
+func (s *MemoryStore) HVals(key string) ([]string, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+	if !ok {
+		s.mu.RUnlock()
+		return []string{}, nil
+	}
+
+	if isExpired(v) {
+		s.mu.RUnlock()
+		s.lazyExpire(key)
+		return []string{}, nil
+	}
+
+	if v.Type != types.HashType {
+		s.mu.RUnlock()
+		return nil, ErrWrongType
+	}
+
+	hashMap := v.Data.(map[string]string)
+	vals := make([]string, 0, len(hashMap))
+	for _, val := range hashMap {
+		vals = append(vals, val)
+	}
+	s.mu.RUnlock()
+
+	return vals, nil
+}
