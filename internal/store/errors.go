@@ -26,3 +26,18 @@ var ErrWrongType = errors.New("WRONGTYPE Operation against a key holding the wro
 // ErrFieldNotFound is returned by hash operations when the requested field does
 // not exist in the hash.
 var ErrFieldNotFound = errors.New("field not found")
+
+// ErrNotInteger is returned when a mathematical operation is attempted on a
+// value that cannot be parsed as an integer.
+var ErrNotInteger = errors.New("ERR hash value is not an integer")
+
+// ErrNotFloat is returned when a mathematical operation is attempted on a
+// value that cannot be parsed as a float.
+var ErrNotFloat = errors.New("ERR hash value is not a float")
+
+// ErrOverflow is returned when an increment operation would overflow the bounds
+// of a 64-bit signed integer.
+var ErrOverflow = errors.New("ERR increment or decrement would overflow")
+
+// ErrNaNOrInfinity is returned when a float operation would produce NaN or Infinity.
+var ErrNaNOrInfinity = errors.New("ERR increment would produce NaN or Infinity")

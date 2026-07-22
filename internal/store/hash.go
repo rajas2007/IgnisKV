@@ -1,6 +1,9 @@
 package store
 
 import (
+	"math"
+	"strconv"
+
 	"github.com/rajas2007/IgnisKV/internal/types"
 )
 
@@ -369,4 +372,151 @@ func (s *MemoryStore) HStrLen(key, field string) (int, error) {
 	}
 
 	return len(val), nil
+}
+
+// HSetNX sets field in the hash stored at key to value, only if field does not yet exist.
+// If key does not exist, a new key holding a hash is created.
+// If field already exists, this operation has no effect.
+// It returns true if the field was set, and false if it already existed.
+// It returns ErrWrongType if the key exists but is not a hash.
+func (s *MemoryStore) HSetNX(key, field, value string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v, ok := s.data[key]
+	if ok && isExpired(v) {
+		s.deleteExpiredLocked(key)
+		ok = false
+	}
+
+	if !ok {
+		v = types.Value{
+			Type: types.HashType,
+			Data: make(map[string]string),
+		}
+	} else if v.Type != types.HashType {
+		return false, ErrWrongType
+	}
+
+	hashMap := v.Data.(map[string]string)
+
+	if _, exists := hashMap[field]; exists {
+		return false, nil // Do not overwrite, no persistence needed
+	}
+
+	hashMap[field] = value
+	v.Data = hashMap
+	s.data[key] = v
+
+	return true, nil
+}
+
+// HIncrBy increments the number stored at field in the hash stored at key by delta.
+// If key does not exist, a new key holding a hash is created.
+// If field does not exist the value is set to 0 before the operation is performed.
+// Returns the value of field after the increment operation.
+// Returns ErrWrongType if the key exists but is not a hash.
+// Returns ErrNotInteger if the hash value cannot be parsed as an integer.
+// Returns ErrOverflow if the operation would overflow a 64-bit signed integer.
+func (s *MemoryStore) HIncrBy(key, field string, delta int64) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v, ok := s.data[key]
+	if ok && isExpired(v) {
+		s.deleteExpiredLocked(key)
+		ok = false
+	}
+
+	if !ok {
+		v = types.Value{
+			Type: types.HashType,
+			Data: make(map[string]string),
+		}
+	} else if v.Type != types.HashType {
+		return 0, ErrWrongType
+	}
+
+	hashMap := v.Data.(map[string]string)
+
+	var current int64 = 0
+	valStr, exists := hashMap[field]
+	if exists {
+		parsed, err := strconv.ParseInt(valStr, 10, 64)
+		if err != nil {
+			return 0, ErrNotInteger
+		}
+		current = parsed
+	}
+
+	// Detect overflow before assignment
+	if (delta > 0 && current > math.MaxInt64-delta) || (delta < 0 && current < math.MinInt64-delta) {
+		return 0, ErrOverflow
+	}
+
+	newValue := current + delta
+	hashMap[field] = strconv.FormatInt(newValue, 10)
+	v.Data = hashMap
+	s.data[key] = v
+
+	return newValue, nil
+}
+
+// HIncrByFloat increments the specified field of a hash stored at key, and representing a floating point number, by the specified increment.
+// If the key does not exist, a new key holding a hash is created.
+// If the field does not exist, it is set to 0 before the operation is performed.
+// Returns the value of field after the increment operation.
+// Returns ErrWrongType if the key exists but is not a hash.
+// Returns ErrNotFloat if the hash value cannot be parsed as a float.
+// Returns ErrNaNOrInfinity if the operation would produce NaN or Infinity.
+func (s *MemoryStore) HIncrByFloat(key, field string, delta float64) (float64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v, ok := s.data[key]
+	if ok && isExpired(v) {
+		s.deleteExpiredLocked(key)
+		ok = false
+	}
+
+	if !ok {
+		v = types.Value{
+			Type: types.HashType,
+			Data: make(map[string]string),
+		}
+	} else if v.Type != types.HashType {
+		return 0, ErrWrongType
+	}
+
+	hashMap := v.Data.(map[string]string)
+
+	var current float64 = 0
+	valStr, exists := hashMap[field]
+	if exists {
+		parsed, err := strconv.ParseFloat(valStr, 64)
+		if err != nil {
+			return 0, ErrNotFloat
+		}
+		current = parsed
+	}
+
+	newValue := current + delta
+
+	if math.IsNaN(newValue) || math.IsInf(newValue, 0) {
+		return 0, ErrNaNOrInfinity
+	}
+
+	// Format matching Redis (which removes trailing zeros and often uses %g)
+	// Go's strconv.FormatFloat with 'f', -1, 64 handles this, but some specific formatting might be needed.
+	// Actually, Redis drops trailing zeros. FormatFloat does this with 'f', -1.
+	// Wait, 'f' can result in very long strings. 'g' is more standard for Redis float responses, but let's use 'f' with trailing zero stripping which is what Redis does.
+	// Actually, `strconv.FormatFloat(newValue, 'f', -1, 64)` doesn't output exponential notation for small/large numbers by default but might.
+	// We'll use 'f', -1, 64 which drops trailing zeros naturally.
+	strValue := strconv.FormatFloat(newValue, 'f', -1, 64)
+
+	hashMap[field] = strValue
+	v.Data = hashMap
+	s.data[key] = v
+
+	return newValue, nil
 }

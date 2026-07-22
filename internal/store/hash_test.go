@@ -1,7 +1,9 @@
 package store
 
 import (
+	"math"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -895,5 +897,267 @@ func TestHStrLen(t *testing.T) {
 	}
 	if s.Exists("hash_expired") {
 		t.Fatalf("expected key to be physically deleted after lazy expiration")
+	}
+}
+
+func TestHSetNX(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	set, err := s.HSetNX("hash1", "f1", "v1")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !set {
+		t.Fatalf("expected HSetNX to return true on missing key")
+	}
+	val, _ := s.HGet("hash1", "f1")
+	if val != "v1" {
+		t.Fatalf("expected v1, got %s", val)
+	}
+
+	// 2. Existing field
+	set, err = s.HSetNX("hash1", "f1", "v2")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if set {
+		t.Fatalf("expected HSetNX to return false on existing field")
+	}
+	val, _ = s.HGet("hash1", "f1")
+	if val != "v1" {
+		t.Fatalf("expected field to retain old value v1, got %s", val)
+	}
+
+	// 3. Missing field in existing hash
+	set, err = s.HSetNX("hash1", "f2", "v2")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !set {
+		t.Fatalf("expected HSetNX to return true on missing field")
+	}
+	val, _ = s.HGet("hash1", "f2")
+	if val != "v2" {
+		t.Fatalf("expected v2, got %s", val)
+	}
+
+	// 4. Wrong type
+	s.Set("string_key", types.Value{Type: types.StringType, Data: "val"})
+	_, err = s.HSetNX("string_key", "f1", "v1")
+	if err != ErrWrongType {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+
+	// 5. Lazy expiration
+	s.Set("hash_expired", types.Value{
+		Type:      types.HashType,
+		Data:      map[string]string{"f1": "v1"},
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	})
+	set, err = s.HSetNX("hash_expired", "f1", "v2")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !set {
+		t.Fatalf("expected HSetNX to return true on expired key (treats as missing)")
+	}
+	val, _ = s.HGet("hash_expired", "f1")
+	if val != "v2" {
+		t.Fatalf("expected v2, got %s", val)
+	}
+}
+
+func TestHIncrBy(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	val, err := s.HIncrBy("hash1", "f1", 5)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if val != 5 {
+		t.Fatalf("expected 5, got %d", val)
+	}
+	strVal, _ := s.HGet("hash1", "f1")
+	if strVal != "5" {
+		t.Fatalf("expected '5', got %s", strVal)
+	}
+
+	// 2. Existing field (positive increment)
+	val, err = s.HIncrBy("hash1", "f1", 10)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if val != 15 {
+		t.Fatalf("expected 15, got %d", val)
+	}
+
+	// 3. Existing field (negative increment)
+	val, err = s.HIncrBy("hash1", "f1", -20)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if val != -5 {
+		t.Fatalf("expected -5, got %d", val)
+	}
+
+	// 3.5. Zero increment
+	val, err = s.HIncrBy("hash1", "f1", 0)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if val != -5 {
+		t.Fatalf("expected -5, got %d", val)
+	}
+
+	// 4. Missing field in existing hash
+	val, err = s.HIncrBy("hash1", "f2", 1)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if val != 1 {
+		t.Fatalf("expected 1, got %d", val)
+	}
+
+	// 5. Invalid integer
+	s.HSet("hash1", []string{"f3", "not-an-int"})
+	_, err = s.HIncrBy("hash1", "f3", 1)
+	if err != ErrNotInteger {
+		t.Fatalf("expected ErrNotInteger, got %v", err)
+	}
+
+	// 6. Overflow (positive)
+	s.HSet("hash1", []string{"f4", strconv.FormatInt(math.MaxInt64-5, 10)})
+	_, err = s.HIncrBy("hash1", "f4", 10)
+	if err != ErrOverflow {
+		t.Fatalf("expected ErrOverflow, got %v", err)
+	}
+
+	// 7. Overflow (negative)
+	s.HSet("hash1", []string{"f5", strconv.FormatInt(math.MinInt64+5, 10)})
+	_, err = s.HIncrBy("hash1", "f5", -10)
+	if err != ErrOverflow {
+		t.Fatalf("expected ErrOverflow, got %v", err)
+	}
+
+	// 8. Wrong type
+	s.Set("string_key", types.Value{Type: types.StringType, Data: "val"})
+	_, err = s.HIncrBy("string_key", "f1", 1)
+	if err != ErrWrongType {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+
+	// 9. Lazy expiration
+	s.Set("hash_expired", types.Value{
+		Type:      types.HashType,
+		Data:      map[string]string{"f1": "5"},
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	})
+	val, err = s.HIncrBy("hash_expired", "f1", 10)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if val != 10 { // Should treat as 0 + 10
+		t.Fatalf("expected 10 on expired key, got %d", val)
+	}
+}
+
+func TestHIncrByFloat(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Missing key
+	val, err := s.HIncrByFloat("hash1", "f1", 5.5)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if val != 5.5 {
+		t.Fatalf("expected 5.5, got %f", val)
+	}
+	strVal, _ := s.HGet("hash1", "f1")
+	if strVal != "5.5" {
+		t.Fatalf("expected '5.5', got %s", strVal)
+	}
+
+	// 2. Existing field (positive increment)
+	val, err = s.HIncrByFloat("hash1", "f1", 10.2)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if val != 15.7 {
+		t.Fatalf("expected 15.7, got %f", val)
+	}
+
+	// 3. Existing field (negative increment)
+	val, err = s.HIncrByFloat("hash1", "f1", -20.0)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if math.Abs(val-(-4.3)) > 1e-9 {
+		t.Fatalf("expected -4.3, got %f", val)
+	}
+
+	// 3.5. Zero increment
+	val, err = s.HIncrByFloat("hash1", "f1", 0.0)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if math.Abs(val-(-4.3)) > 1e-9 {
+		t.Fatalf("expected -4.3, got %f", val)
+	}
+
+	// 4. Missing field in existing hash
+	val, err = s.HIncrByFloat("hash1", "f2", 1.1)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if val != 1.1 {
+		t.Fatalf("expected 1.1, got %f", val)
+	}
+
+	// 5. Invalid float
+	s.HSet("hash1", []string{"f3", "not-a-float"})
+	_, err = s.HIncrByFloat("hash1", "f3", 1.0)
+	if err != ErrNotFloat {
+		t.Fatalf("expected ErrNotFloat, got %v", err)
+	}
+
+	// 6. NaN / Infinity rejection
+	// Explicit Infinity
+	_, err = s.HIncrByFloat("hash1", "f4", math.Inf(1))
+	if err != ErrNaNOrInfinity {
+		t.Fatalf("expected ErrNaNOrInfinity for explicit +Inf, got %v", err)
+	}
+	// Explicit NaN
+	_, err = s.HIncrByFloat("hash1", "f4", math.NaN())
+	if err != ErrNaNOrInfinity {
+		t.Fatalf("expected ErrNaNOrInfinity for explicit NaN, got %v", err)
+	}
+	// Overflow to Infinity
+	s.HSet("hash1", []string{"f4", "1e308"})      // Large valid float
+	_, err = s.HIncrByFloat("hash1", "f4", 1e308) // 1e308 + 1e308 = +Inf
+	if err != ErrNaNOrInfinity {
+		t.Fatalf("expected ErrNaNOrInfinity for overflow to +Inf, got %v", err)
+	}
+
+	// 7. Wrong type
+	s.Set("string_key", types.Value{Type: types.StringType, Data: "val"})
+	_, err = s.HIncrByFloat("string_key", "f1", 1.0)
+	if err != ErrWrongType {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+
+	// 8. Lazy expiration
+	s.Set("hash_expired", types.Value{
+		Type:      types.HashType,
+		Data:      map[string]string{"f1": "5.5"},
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	})
+	val, err = s.HIncrByFloat("hash_expired", "f1", 10.0)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if val != 10.0 { // Should treat as 0 + 10.0
+		t.Fatalf("expected 10.0 on expired key, got %f", val)
 	}
 }
