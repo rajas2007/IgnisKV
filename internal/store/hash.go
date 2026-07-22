@@ -336,3 +336,37 @@ func (s *MemoryStore) HVals(key string) ([]string, error) {
 
 	return vals, nil
 }
+
+// HStrLen returns the string length of the value associated with field in the
+// hash stored at key. If the key or the field do not exist, 0 is returned.
+// If the key exists but is not a hash, it returns ErrWrongType.
+// The length is calculated in bytes using Go's native len() function.
+func (s *MemoryStore) HStrLen(key, field string) (int, error) {
+	s.mu.RLock()
+	v, ok := s.data[key]
+	if !ok {
+		s.mu.RUnlock()
+		return 0, nil
+	}
+
+	if isExpired(v) {
+		s.mu.RUnlock()
+		s.lazyExpire(key)
+		return 0, nil
+	}
+
+	if v.Type != types.HashType {
+		s.mu.RUnlock()
+		return 0, ErrWrongType
+	}
+
+	hashMap := v.Data.(map[string]string)
+	val, exists := hashMap[field]
+	s.mu.RUnlock()
+
+	if !exists {
+		return 0, nil
+	}
+
+	return len(val), nil
+}

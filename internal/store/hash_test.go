@@ -812,3 +812,88 @@ func TestHVals(t *testing.T) {
 		t.Fatalf("expected key to be physically deleted after lazy expiration")
 	}
 }
+
+func TestHStrLen(t *testing.T) {
+	s := NewMemoryStore()
+
+	// 1. Existing field
+	s.HSet("hash1", []string{"f1", "value", "f2", "é"}) // "é" is 2 bytes in UTF-8
+	length, err := s.HStrLen("hash1", "f1")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 5 {
+		t.Fatalf("expected length 5, got %d", length)
+	}
+
+	// UTF-8 byte counting verification
+	length, err = s.HStrLen("hash1", "f2")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 2 {
+		t.Fatalf("expected length 2 (bytes) for 'é', got %d", length)
+	}
+
+	// 2. Missing field
+	length, err = s.HStrLen("hash1", "missing_field")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected length 0 for missing field, got %d", length)
+	}
+
+	// 3. Missing key
+	length, err = s.HStrLen("missing_key", "f1")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected length 0 for missing key, got %d", length)
+	}
+
+	// 4. Wrong type
+	s.Set("string_key", types.Value{Type: types.StringType, Data: "val"})
+	_, err = s.HStrLen("string_key", "f1")
+	if err != ErrWrongType {
+		t.Fatalf("expected ErrWrongType, got %v", err)
+	}
+
+	// 5. Empty string value
+	s.HSet("hash2", []string{"f1", ""})
+	length, err = s.HStrLen("hash2", "f1")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected length 0 for empty string, got %d", length)
+	}
+
+	// 6. Empty field name
+	s.HSet("hash3", []string{"", "value"})
+	length, err = s.HStrLen("hash3", "")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if length != 5 {
+		t.Fatalf("expected length 5 for empty field name, got %d", length)
+	}
+
+	// 7. Lazy expiration
+	s.Set("hash_expired", types.Value{
+		Type:      types.HashType,
+		Data:      map[string]string{"f": "v"},
+		ExpiresAt: time.Now().Add(-1 * time.Minute),
+	})
+	length, err = s.HStrLen("hash_expired", "f")
+	if err != nil {
+		t.Fatalf("expected nil error for expired key, got %v", err)
+	}
+	if length != 0 {
+		t.Fatalf("expected length 0 for expired key, got %d", length)
+	}
+	if s.Exists("hash_expired") {
+		t.Fatalf("expected key to be physically deleted after lazy expiration")
+	}
+}
